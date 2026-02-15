@@ -46,7 +46,7 @@
                         <div class="input-group">
                             <input type="text" 
                                    id="defaultDacpacPath" 
-                                   class="form-control" 
+                                  class="form-control" 
                                    @bind="_mappingConfig.DefaultDacpacEntitiesPath" 
                                    placeholder="./output" />
                             <button type="button" class="btn btn-outline-secondary" @onclick="() => BrowseDefaultDacpacPath()">
@@ -393,6 +393,10 @@
             DeleteOldEntities = false,
             BackupRetentionDays = 30,
             MaxConcurrentReplacements = 5
+        };
+
+        _saveMessage = "Settings reset to defaults. Click 'Save Settings' to persist.";
+    }
 
     private void BrowseDefaultOldPath()
     {
@@ -427,9 +431,5 @@
                 break;
         }
         StateHasChanged();
-    }
-        };
-
-        _saveMessage = "Settings reset to defaults. Click 'Save Settings' to persist.";
     }
 }
