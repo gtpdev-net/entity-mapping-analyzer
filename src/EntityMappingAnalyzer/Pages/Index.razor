@@ -223,7 +223,11 @@
         {
             currentDir = Path.GetFullPath(Path.Combine(currentDir, "..", "..", ".."));
         }
-void BrowseOldPath()
+
+        return Path.GetFullPath(Path.Combine(currentDir, path));
+    }
+
+    private void BrowseOldPath()
     {
         _currentBrowseTarget = "oldPath";
         _fileBrowser?.Show(config.OldEntitiesPath, FileBrowserModal.BrowseMode.Folder);
@@ -258,11 +262,7 @@ void BrowseOldPath()
         StateHasChanged();
     }
 
-    private 
-        return Path.GetFullPath(Path.Combine(currentDir, path));
-    }
-
-    private class ScanConfig
+    class ScanConfig
     {
         public string OldEntitiesPath { get; set; } = string.Empty;
         public string DacpacEntitiesPath { get; set; } = string.Empty;
