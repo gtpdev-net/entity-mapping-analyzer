@@ -1,0 +1,447 @@
+@page "/manual-mapping"
+@using EntityMappingAnalyzer.Models
+@using EntityMappingAnalyzer.Services
+@inject RoslynEntityScanner Scanner
+@inject SimilarityAnalyzer SimilarityAnalyzer
+@inject MappingStorageService StorageService
+@inject NavigationManager Navigation
+
+<PageTitle>Manual Mapping - Entity Mapping Analyzer</PageTitle>
+
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h2>Add Manual Mapping</h2>
+            <p class="text-muted">Create a custom mapping for entities that weren't automatically matched</p>
+        </div>
+    </div>
+
+    @if (_isLoading)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading entities...</span>
+            </div>
+            <p class="mt-2">Loading entities...</p>
+        </div>
+    }
+    else if (!string.IsNullOrEmpty(_errorMessage))
+    {
+        <div class="alert alert-danger" role="alert">
+            <i class="bi bi-exclamation-triangle"></i>
+            <strong>Error:</strong> @_errorMessage
+        </div>
+        <button class="btn btn-secondary" @onclick="@(() => Navigation.NavigateTo("/"))">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </button>
+    }
+    else
+    {
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Create New Mapping</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-4">
+                            <label for="oldEntity" class="form-label fw-bold">Old Entity</label>
+                            <select id="oldEntity" class="form-select" @onchange="OnOldEntityChanged">
+                                <option value="">-- Select an entity --</option>
+                                @foreach (var entity in _oldEntities.OrderBy(e => e.ClassName))
+                                {
+                                    <option value="@entity.ClassName">@entity.ClassName (@entity.Namespace)</option>
+                                }
+                            </select>
+                            @if (_selectedOldEntity != null)
+                            {
+                                <div class="mt-2 p-3 bg-light rounded">
+                                    <small class="text-muted">
+                                        <strong>Namespace:</strong> @_selectedOldEntity.Namespace<br />
+                                        <strong>File:</strong> @_selectedOldEntity.FilePath<br />
+                                        <strong>Properties:</strong> @_selectedOldEntity.Properties.Count
+                                    </small>
+                                </div>
+                            }
+                        </div>
+
+                        <div class="mb-4">
+                            <label for="newEntity" class="form-label fw-bold">New Entity (DACPAC)</label>
+                            <select id="newEntity" class="form-select" @onchange="OnNewEntityChanged">
+                                <option value="">-- Select an entity --</option>
+                                @foreach (var entity in _newEntities.OrderBy(e => e.ClassName))
+                                {
+                                    <option value="@entity.ClassName">@entity.ClassName (@entity.Namespace)</option>
+                                }
+                            </select>
+                            @if (_selectedNewEntity != null)
+                            {
+                                <div class="mt-2 p-3 bg-light rounded">
+                                    <small class="text-muted">
+                                        <strong>Namespace:</strong> @_selectedNewEntity.Namespace<br />
+                                        <strong>File:</strong> @_selectedNewEntity.FilePath<br />
+                                        <strong>Properties:</strong> @_selectedNewEntity.Properties.Count
+                                    </small>
+                                </div>
+                            }
+                        </div>
+
+                        @if (_selectedOldEntity != null && _selectedNewEntity != null)
+                        {
+                            <div class="alert alert-info">
+                                <i class="bi bi-info-circle"></i>
+                                <strong>Confidence Score:</strong> @_confidenceScore.ToString("P0")
+                                <br />
+                                <small>@string.Join(", ", _matchReasons)</small>
+                            </div>
+
+                            <h6 class="mt-4 mb-3">Property Mappings</h6>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-bordered">
+                                    <thead>
+                                        <tr>
+                                            <th>Old Property</th>
+                                            <th>Type</th>
+                                            <th>Action</th>
+                                            <th>New Property</th>
+                                            <th>Type</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var pm in _propertyMappings.OrderBy(p => p.OldPropertyName))
+                                        {
+                                            <tr class="@GetPropertyMappingRowClass(pm)">
+                                                <td>
+                                                    <strong>@pm.OldPropertyName</strong>
+                                                </td>
+                                                <td>
+                                                    <small class="text-muted">@pm.OldPropertyType</small>
+                                                </td>
+                                                <td>
+                                                    <select class="form-select form-select-sm" @onchange="@((e) => UpdatePropertyAction(pm, e.Value?.ToString() ?? "Auto"))">
+                                                        <option value="Auto" selected="@(pm.Action == MappingAction.Auto)">Auto</option>
+                                                        <option value="Manual" selected="@(pm.Action == MappingAction.Manual)">Manual</option>
+                                                        <option value="Ignored" selected="@(pm.Action == MappingAction.Ignored)">Ignored</option>
+                                                    </select>
+                                                </td>
+                                                <td>
+                                                    @if (pm.Action != MappingAction.Ignored)
+                                                    {
+                                                        <select class="form-select form-select-sm" @onchange="@((e) => UpdateNewPropertyName(pm, e.Value?.ToString()))">
+                                                            <option value="">-- Select --</option>
+                                                            @foreach (var newProp in _selectedNewEntity.Properties.OrderBy(p => p.Name))
+                                                            {
+                                                                <option value="@newProp.Name" selected="@(pm.NewPropertyName == newProp.Name)">
+                                                                    @newProp.Name
+                                                                </option>
+                                                            }
+                                                        </select>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="text-muted">—</span>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    @if (!string.IsNullOrEmpty(pm.NewPropertyName))
+                                                    {
+                                                        var newProp = _selectedNewEntity.Properties.FirstOrDefault(p => p.Name == pm.NewPropertyName);
+                                                        <small class="text-muted">@(newProp?.Type ?? "N/A")</small>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+
+                        <div class="mt-4">
+                            <button class="btn btn-primary" 
+                                    @onclick="SaveMapping" 
+                                    disabled="@(_selectedOldEntity == null || _selectedNewEntity == null || _isSaving)">
+                                @if (_isSaving)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                }
+                                <i class="bi bi-save"></i> Save Mapping
+                            </button>
+                            <button class="btn btn-secondary ms-2" @onclick="@(() => Navigation.NavigateTo("/mappings"))">
+                                <i class="bi bi-x-circle"></i> Cancel
+                            </button>
+                        </div>
+
+                        @if (!string.IsNullOrEmpty(_saveMessage))
+                        {
+                            <div class="alert alert-success mt-3" role="alert">
+                                <i class="bi bi-check-circle"></i> @_saveMessage
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h6 class="mb-0">Instructions</h6>
+                    </div>
+                    <div class="card-body">
+                        <ol class="small">
+                            <li>Select an old entity from your existing codebase</li>
+                            <li>Select the corresponding new DACPAC entity</li>
+                            <li>Review the auto-generated property mappings</li>
+                            <li>Adjust property actions and mappings as needed:
+                                <ul>
+                                    <li><strong>Auto:</strong> Automatic mapping (default for matches)</li>
+                                    <li><strong>Manual:</strong> User-defined mapping</li>
+                                    <li><strong>Ignored:</strong> Property will not be mapped</li>
+                                </ul>
+                            </li>
+                            <li>Click "Save Mapping" to add to your mapping database</li>
+                        </ol>
+                        <div class="alert alert-warning alert-sm mt-3">
+                            <small><i class="bi bi-lightbulb"></i> Manual mappings are created with 100% confidence</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private List<EntityInfo> _oldEntities = new();
+    private List<EntityInfo> _newEntities = new();
+    private EntityInfo? _selectedOldEntity;
+    private EntityInfo? _selectedNewEntity;
+    private List<PropertyMapping> _propertyMappings = new();
+    private double _confidenceScore = 0;
+    private List<string> _matchReasons = new();
+    
+    private bool _isLoading = true;
+    private bool _isSaving = false;
+    private string? _errorMessage;
+    private string? _saveMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            // Load the existing mapping database to get entity paths
+            var database = await StorageService.LoadAsync(StorageService.GetDefaultFilePath());
+            
+            if (database == null || string.IsNullOrEmpty(database.OldEntitiesPath) || string.IsNullOrEmpty(database.DacpacEntitiesPath))
+            {
+                _errorMessage = "No mapping database found. Please run a scan from the Dashboard first.";
+                _isLoading = false;
+                return;
+            }
+
+            // Scan both directories
+            _oldEntities = await Scanner.ScanDirectoryAsync(database.OldEntitiesPath);
+            _newEntities = await Scanner.ScanDirectoryAsync(database.DacpacEntitiesPath);
+
+            if (_oldEntities.Count == 0)
+            {
+                _errorMessage = $"No entities found in old entities path: {database.OldEntitiesPath}";
+            }
+            else if (_newEntities.Count == 0)
+            {
+                _errorMessage = $"No entities found in DACPAC entities path: {database.DacpacEntitiesPath}";
+            }
+
+            _isLoading = false;
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Error loading entities: {ex.Message}";
+            _isLoading = false;
+        }
+    }
+
+    private void OnOldEntityChanged(ChangeEventArgs e)
+    {
+        var className = e.Value?.ToString();
+        _selectedOldEntity = _oldEntities.FirstOrDefault(x => x.ClassName == className);
+        _saveMessage = null;
+        
+        if (_selectedOldEntity != null && _selectedNewEntity != null)
+        {
+            GeneratePropertyMappings();
+        }
+    }
+
+    private void OnNewEntityChanged(ChangeEventArgs e)
+    {
+        var className = e.Value?.ToString();
+        _selectedNewEntity = _newEntities.FirstOrDefault(x => x.ClassName == className);
+        _saveMessage = null;
+        
+        if (_selectedOldEntity != null && _selectedNewEntity != null)
+        {
+            GeneratePropertyMappings();
+        }
+    }
+
+    private void GeneratePropertyMappings()
+    {
+        if (_selectedOldEntity == null || _selectedNewEntity == null) return;
+
+        // Use the SimilarityAnalyzer to calculate entity confidence score
+        var (confidence, reasons) = SimilarityAnalyzer.AnalyzeSimilarity(_selectedOldEntity, _selectedNewEntity);
+        
+        _confidenceScore = confidence;
+        _matchReasons = reasons;
+
+        // Generate property mappings manually
+        _propertyMappings = new List<PropertyMapping>();
+
+        foreach (var oldProp in _selectedOldEntity.Properties)
+        {
+            // Try to find matching property in new entity (exact name match first)
+            var newProp = _selectedNewEntity.Properties.FirstOrDefault(p => 
+                p.Name.Equals(oldProp.Name, StringComparison.OrdinalIgnoreCase));
+
+            // If no exact match, try fuzzy matching
+            if (newProp == null)
+            {
+                foreach (var np in _selectedNewEntity.Properties)
+                {
+                    int similarity = FuzzySharp.Fuzz.Ratio(oldProp.Name.ToLower(), np.Name.ToLower());
+                    if (similarity >= 80) // 80% similarity threshold
+                    {
+                        newProp = np;
+                        break;
+                    }
+                }
+            }
+
+            var propertyMapping = new PropertyMapping
+            {
+                OldPropertyName = oldProp.Name,
+                OldPropertyType = oldProp.Type,
+                NewPropertyName = newProp?.Name ?? string.Empty,
+                NewPropertyType = newProp?.Type ?? string.Empty,
+                IsMatched = newProp != null,
+                Action = newProp != null ? MappingAction.Auto : MappingAction.Ignored
+            };
+
+            _propertyMappings.Add(propertyMapping);
+        }
+    }
+
+    private void UpdatePropertyAction(PropertyMapping pm, string action)
+    {
+        pm.Action = Enum.Parse<MappingAction>(action);
+        
+        if (pm.Action == MappingAction.Ignored)
+        {
+            pm.NewPropertyName = string.Empty;
+            pm.NewPropertyType = string.Empty;
+            pm.IsMatched = false;
+        }
+        
+        StateHasChanged();
+    }
+
+    private void UpdateNewPropertyName(PropertyMapping pm, string? newName)
+    {
+        if (string.IsNullOrEmpty(newName))
+        {
+            pm.NewPropertyName = string.Empty;
+            pm.NewPropertyType = string.Empty;
+            pm.IsMatched = false;
+        }
+        else
+        {
+            var newProp = _selectedNewEntity?.Properties.FirstOrDefault(p => p.Name == newName);
+            pm.NewPropertyName = newName;
+            pm.NewPropertyType = newProp?.Type ?? string.Empty;
+            pm.IsMatched = true;
+            
+            // Mark as manual if user changed it
+            if (pm.Action == MappingAction.Auto)
+            {
+                pm.Action = MappingAction.Manual;
+            }
+        }
+        
+        StateHasChanged();
+    }
+
+    private string GetPropertyMappingRowClass(PropertyMapping pm)
+    {
+        return pm.Action switch
+        {
+            MappingAction.Ignored => "table-warning",
+            MappingAction.Manual => "table-info",
+            _ => ""
+        };
+    }
+
+    private async Task SaveMapping()
+    {
+        if (_selectedOldEntity == null || _selectedNewEntity == null) return;
+
+        _isSaving = true;
+        _saveMessage = null;
+
+        try
+        {
+            // Load existing database
+            var database = await StorageService.LoadAsync(StorageService.GetDefaultFilePath());
+            
+            if (database == null)
+            {
+                _errorMessage = "Cannot save: No mapping database found.";
+                _isSaving = false;
+                return;
+            }
+
+            // Check if mapping already exists
+            var existing = database.Mappings.FirstOrDefault(m => 
+                m.OldEntity?.ClassName == _selectedOldEntity.ClassName &&
+                m.NewEntity?.ClassName == _selectedNewEntity.ClassName);
+
+            if (existing != null)
+            {
+                _errorMessage = $"A mapping already exists between {_selectedOldEntity.ClassName} and {_selectedNewEntity.ClassName}";
+                _isSaving = false;
+                return;
+            }
+
+            // Create new mapping with confidence 1.0 (manual override)
+            var newMapping = new EntityMapping
+            {
+                OldEntity = _selectedOldEntity,
+                NewEntity = _selectedNewEntity,
+                ConfidenceScore = 1.0, // Manual mappings have 100% confidence
+                PropertyMappings = _propertyMappings,
+                MatchReasons = new List<string> { "Manual mapping created by user" },
+                IsVerified = true, // Auto-verify manual mappings
+                ReplacementStatus = ReplacementStatus.NotStarted
+            };
+
+            database.Mappings.Add(newMapping);
+            database.LastModifiedDate = DateTime.UtcNow;
+
+            // Save to file
+            await StorageService.SaveAsync(database, StorageService.GetDefaultFilePath());
+
+            _saveMessage = $"✓ Mapping saved successfully! {_selectedOldEntity.ClassName} → {_selectedNewEntity.ClassName}";
+            
+            // Reset form after 2 seconds
+            await Task.Delay(2000);
+            Navigation.NavigateTo("/mappings");
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Error saving mapping: {ex.Message}";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+}

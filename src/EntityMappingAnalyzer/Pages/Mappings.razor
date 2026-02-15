@@ -1,0 +1,257 @@
+@page "/mappings"
+@inject MappingStorageService StorageService
+@inject Microsoft.Extensions.Options.IOptions<MappingAnalyzerOptions> Options
+@inject NavigationManager Navigation
+
+<PageTitle>Mappings - Entity Mapping Analyzer</PageTitle>
+
+<h1>Entity Mappings</h1>
+
+@if (database == null)
+{
+    <div class="alert alert-warning">
+        <h4>No mappings found</h4>
+        <p>Please run a scan from the <a href="/">Dashboard</a> first.</p>
+    </div>
+}
+else
+{
+    <div class="row mb-3">
+        <div class="col">
+            <div class="card">
+                <div class="card-body">
+                    <h5>Summary</h5>
+                    <div class="row">
+                        <div class="col-md-3">
+                            <strong>Total:</strong> @database.TotalMappings
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Verified:</strong> @database.VerifiedMappings
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Unverified:</strong> @database.UnverifiedMappings
+                        </div>
+                        <div class="col-md-3">
+                            <strong>Avg. Confidence:</strong> @database.AverageConfidence.ToString("P1")
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Replacement Toolbar -->
+    @if (selectedMappingIds.Any())
+    {
+        <div class="alert alert-info d-flex justify-content-between align-items-center">
+            <div>
+                <i class="bi bi-info-circle"></i>
+                <strong>@selectedMappingIds.Count mapping(s) selected</strong>
+            </div>
+            <div>
+                <button class="btn btn-primary" @onclick="StartReplacement" disabled="@(!selectedMappingIds.Any())">
+                    <i class="bi bi-arrow-repeat"></i> Replace Selected
+                </button>
+                <button class="btn btn-secondary ms-2" @onclick="ClearSelection">
+                    <i class="bi bi-x-circle"></i> Clear Selection
+                </button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="mb-3">
+            <button class="btn btn-outline-primary" @onclick="SelectAllVerified">
+                <i class="bi bi-check-square"></i> Select All Verified
+            </button>
+            <button class="btn btn-outline-primary ms-2" @onclick="SelectAllReady">
+                <i class="bi bi-check-square"></i> Select All Ready for Replacement
+            </button>
+        </div>
+    }
+
+    <div class="table-responsive">
+        <table class="table table-striped table-hover">
+            <thead>
+                <tr>
+                    <th style="width: 40px;">
+                        <input type="checkbox" 
+                               class="form-check-input" 
+                               @onchange="ToggleSelectAll"
+                               checked="@(selectedMappingIds.Count == database.Mappings.Count)" />
+                    </th>
+                    <th>Old Entity</th>
+                    <th>New Entity</th>
+                    <th>Confidence</th>
+                    <th>Status</th>
+                    <th>Replacement</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var mapping in database.Mappings)
+                {
+                    var rowClass = mapping.IsVerified ? "table-success" : (mapping.ConfidenceScore < 0.7 ? "table-warning" : "");
+                    var isSelected = selectedMappingIds.Contains(mapping.Id);
+                    <tr class="@rowClass @(isSelected ? "table-active" : "")">
+                        <td>
+                            <input type="checkbox" 
+                                   class="form-check-input" 
+                                   checked="@isSelected"
+                                   @onchange="@(() => ToggleSelection(mapping.Id))" />
+                        </td>
+                        <td>@mapping.OldEntity?.ClassName</td>
+                        <td>@(mapping.NewEntity?.ClassName ?? "<No Match>")</td>
+                        <td>@mapping.ConfidenceScore.ToString("P0")</td>
+                        <td>
+                            @if (mapping.IsVerified)
+                            {
+                                <span class="badge bg-success">Verified</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-warning">Unverified</span>
+                            }
+                        </td>
+                        <td>
+                            <span class="badge bg-@GetReplacementStatusClass(mapping.ReplacementStatus)">
+                                @mapping.ReplacementStatus
+                            </span>
+                            @if (mapping.IsReadyForReplacement)
+                            {
+                                <span class="badge bg-info ms-1" title="Ready for replacement">
+                                    <i class="bi bi-check-circle"></i>
+                                </span>
+                            }
+                        </td>
+                        <td>
+                            <button class="btn btn-sm btn-primary" @onclick="() => ToggleVerified(mapping)">
+                                @(mapping.IsVerified ? "Unverify" : "Verify")
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private MappingDatabase? database;
+    private string? outputPath;
+    private HashSet<string> selectedMappingIds = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var options = Options.Value;
+        outputPath = GetAbsolutePath(options.DefaultOutputPath);
+
+        if (StorageService.Exists(outputPath))
+        {
+            database = await StorageService.LoadAsync(outputPath);
+        }
+    }
+
+    private async Task ToggleVerified(EntityMapping mapping)
+    {
+        mapping.IsVerified = !mapping.IsVerified;
+        
+        if (database != null && outputPath != null)
+        {
+            await StorageService.SaveAsync(database, outputPath);
+        }
+
+        StateHasChanged();
+    }
+
+    private void ToggleSelection(string mappingId)
+    {
+        if (selectedMappingIds.Contains(mappingId))
+        {
+            selectedMappingIds.Remove(mappingId);
+        }
+        else
+        {
+            selectedMappingIds.Add(mappingId);
+        }
+        StateHasChanged();
+    }
+
+    private void ToggleSelectAll()
+    {
+        if (database == null) return;
+
+        if (selectedMappingIds.Count == database.Mappings.Count)
+        {
+            selectedMappingIds.Clear();
+        }
+        else
+        {
+            selectedMappingIds = database.Mappings.Select(m => m.Id).ToHashSet();
+        }
+        StateHasChanged();
+    }
+
+    private void SelectAllVerified()
+    {
+        if (database == null) return;
+        
+        selectedMappingIds = database.Mappings
+            .Where(m => m.IsVerified)
+            .Select(m => m.Id)
+            .ToHashSet();
+        StateHasChanged();
+    }
+
+    private void SelectAllReady()
+    {
+        if (database == null) return;
+        
+        selectedMappingIds = database.Mappings
+            .Where(m => m.IsReadyForReplacement)
+            .Select(m => m.Id)
+            .ToHashSet();
+        StateHasChanged();
+    }
+
+    private void ClearSelection()
+    {
+        selectedMappingIds.Clear();
+        StateHasChanged();
+    }
+
+    private void StartReplacement()
+    {
+        if (!selectedMappingIds.Any()) return;
+
+        // Navigate to replacement execution page with selected mapping IDs
+        var mappingIdsParam = string.Join(",", selectedMappingIds);
+        Navigation.NavigateTo($"/replacement-execution?mappingIds={Uri.EscapeDataString(mappingIdsParam)}");
+    }
+
+    private string GetReplacementStatusClass(ReplacementStatus status) => status switch
+    {
+        ReplacementStatus.NotStarted => "secondary",
+        ReplacementStatus.InProgress => "primary",
+        ReplacementStatus.Completed => "success",
+        ReplacementStatus.Failed => "danger",
+        ReplacementStatus.Skipped => "warning",
+        _ => "secondary"
+    };
+
+    private string GetAbsolutePath(string path)
+    {
+        if (Path.IsPathRooted(path))
+        {
+            return path;
+        }
+
+        var currentDir = Directory.GetCurrentDirectory();
+        if (currentDir.EndsWith("bin/Debug/net8.0") || currentDir.EndsWith("bin\\Debug\\net8.0"))
+        {
+            currentDir = Path.GetFullPath(Path.Combine(currentDir, "..", "..", ".."));
+        }
+
+        return Path.GetFullPath(Path.Combine(currentDir, path));
+    }
+}

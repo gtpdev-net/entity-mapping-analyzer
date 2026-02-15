@@ -1,0 +1,218 @@
+@page "/"
+@inject MappingGeneratorService GeneratorService
+@inject MappingStorageService StorageService
+@inject NavigationManager Navigation
+@inject Microsoft.Extensions.Options.IOptions<MappingAnalyzerOptions> Options
+
+<PageTitle>Dashboard - Entity Mapping Analyzer</PageTitle>
+
+<h1>Entity Mapping Analyzer</h1>
+<p class="lead">Scan and map your existing entities to generated DACPAC entities</p>
+
+<div class="row mt-4">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">Scan Configuration</h5>
+            </div>
+            <div class="card-body">
+                <EditForm Model="@config" OnValidSubmit="@ScanAndGenerateMappings">
+                    <DataAnnotationsValidator />
+                    
+                    <div class="mb-3">
+                        <label for="oldPath" class="form-label">Old Entities Path</label>
+                        <InputText id="oldPath" class="form-control" @bind-Value="config.OldEntitiesPath" />
+                        <div class="form-text">Path to directory containing existing entity classes</div>
+                        <ValidationMessage For="@(() => config.OldEntitiesPath)" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="dacpacPath" class="form-label">DACPAC Entities Path</label>
+                        <InputText id="dacpacPath" class="form-control" @bind-Value="config.DacpacEntitiesPath" />
+                        <div class="form-text">Path to directory containing generated DACPAC entities (usually ./output)</div>
+                        <ValidationMessage For="@(() => config.DacpacEntitiesPath)" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="outputPath" class="form-label">Output File Path</label>
+                        <InputText id="outputPath" class="form-control" @bind-Value="config.OutputPath" />
+                        <div class="form-text">Path where mapping JSON will be saved</div>
+                        <ValidationMessage For="@(() => config.OutputPath)" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="threshold" class="form-label">Confidence Threshold: @config.ConfidenceThreshold.ToString("P0")</label>
+                        <input type="range" class="form-range" id="threshold" min="0" max="100" 
+                               value="@((int)(config.ConfidenceThreshold * 100))"
+                               @oninput="@((e) => config.ConfidenceThreshold = int.Parse(e.Value?.ToString() ?? "60") / 100.0)" />
+                        <div class="form-text">Minimum confidence score to create automatic mappings</div>
+                    </div>
+
+                    @if (isScanning)
+                    {
+                        <div class="alert alert-info">
+                            <div class="d-flex align-items-center">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                <div>@progressMessage</div>
+                            </div>
+                        </div>
+                    }
+
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="alert alert-danger">@errorMessage</div>
+                    }
+
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary btn-lg" disabled="@isScanning">
+                            @(isScanning ? "Scanning..." : "Scan & Generate Mappings")
+                        </button>
+                    </div>
+                </EditForm>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header bg-secondary text-white">
+                <h5 class="mb-0">Last Scan Info</h5>
+            </div>
+            <div class="card-body">
+                @if (lastMapping != null)
+                {
+                    <dl class="row mb-0">
+                        <dt class="col-sm-6">Date:</dt>
+                        <dd class="col-sm-6">@lastMapping.CreatedDate.ToString("yyyy-MM-dd HH:mm")</dd>
+
+                        <dt class="col-sm-6">Total Mappings:</dt>
+                        <dd class="col-sm-6">@lastMapping.TotalMappings</dd>
+
+                        <dt class="col-sm-6">Verified:</dt>
+                        <dd class="col-sm-6">@lastMapping.VerifiedMappings</dd>
+
+                        <dt class="col-sm-6">Avg. Confidence:</dt>
+                        <dd class="col-sm-6">@lastMapping.AverageConfidence.ToString("P1")</dd>
+                    </dl>
+
+                    <div class="d-grid gap-2 mt-3">
+                        <button class="btn btn-success" @onclick="ViewMappings">
+                            View Mappings
+                        </button>
+                    </div>
+                }
+                else
+                {
+                    <p class="text-muted mb-0">No previous scan found</p>
+                }
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header bg-info text-white">
+                <h5 class="mb-0">Quick Start</h5>
+            </div>
+            <div class="card-body">
+                <ol class="mb-0">
+                    <li>Enter paths to old and new entities</li>
+                    <li>Click "Scan & Generate Mappings"</li>
+                    <li>Review and verify mappings</li>
+                    <li>Execute replacements</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private ScanConfig config = new();
+    private MappingDatabase? lastMapping;
+    private bool isScanning;
+    private string progressMessage = string.Empty;
+    private string errorMessage = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Load defaults from configuration
+        var options = Options.Value;
+        config.OldEntitiesPath = GetAbsolutePath(options.DefaultOldEntitiesPath);
+        config.DacpacEntitiesPath = GetAbsolutePath(options.DefaultDacpacEntitiesPath);
+        config.OutputPath = GetAbsolutePath(options.DefaultOutputPath);
+        config.ConfidenceThreshold = options.ConfidenceThresholdMedium;
+
+        // Try to load existing mapping database
+        if (StorageService.Exists(config.OutputPath))
+        {
+            lastMapping = await StorageService.LoadAsync(config.OutputPath);
+        }
+    }
+
+    private async Task ScanAndGenerateMappings()
+    {
+        isScanning = true;
+        errorMessage = string.Empty;
+        progressMessage = "Starting scan...";
+
+        try
+        {
+            var progress = new Progress<string>(msg =>
+            {
+                progressMessage = msg;
+                InvokeAsync(StateHasChanged);
+            });
+
+            var database = await GeneratorService.GenerateMappingsAsync(
+                config.OldEntitiesPath,
+                config.DacpacEntitiesPath,
+                config.ConfidenceThreshold,
+                progress);
+
+            await StorageService.SaveAsync(database, config.OutputPath);
+
+            lastMapping = database;
+            progressMessage = $"✓ Complete! Generated {database.Mappings.Count} mappings";
+
+            // Navigate to mappings page after brief delay
+            await Task.Delay(1500);
+            Navigation.NavigateTo("/mappings");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isScanning = false;
+        }
+    }
+
+    private void ViewMappings()
+    {
+        Navigation.NavigateTo("/mappings");
+    }
+
+    private string GetAbsolutePath(string path)
+    {
+        if (Path.IsPathRooted(path))
+        {
+            return path;
+        }
+
+        // Detect workspace root (similar to DacpacEntityGenerator pattern)
+        var currentDir = Directory.GetCurrentDirectory();
+        if (currentDir.EndsWith("bin/Debug/net8.0") || currentDir.EndsWith("bin\\Debug\\net8.0"))
+        {
+            currentDir = Path.GetFullPath(Path.Combine(currentDir, "..", "..", ".."));
+        }
+
+        return Path.GetFullPath(Path.Combine(currentDir, path));
+    }
+
+    private class ScanConfig
+    {
+        public string OldEntitiesPath { get; set; } = string.Empty;
+        public string DacpacEntitiesPath { get; set; } = string.Empty;
+        public string OutputPath { get; set; } = string.Empty;
+        public double ConfidenceThreshold { get; set; } = 0.6;
+    }
+}

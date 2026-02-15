@@ -1,0 +1,370 @@
+@using EntityMappingAnalyzer.Models
+@inject IJSRuntime JS
+
+@if (IsVisible && Mapping != null)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-box-arrow-in-right"></i> 
+                        Property Mapping Details: @Mapping.OldEntity?.ClassName → @Mapping.NewEntity?.ClassName
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Mapping Info -->
+                    <div class="row mb-4">
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-header bg-warning bg-opacity-25">
+                                    <strong>Old Entity</strong>
+                                </div>
+                                <div class="card-body">
+                                    <dl class="mb-0">
+                                        <dt>Class Name</dt>
+                                        <dd><code>@Mapping.OldEntity?.ClassName</code></dd>
+                                        <dt>Namespace</dt>
+                                        <dd><code>@Mapping.OldEntity?.Namespace</code></dd>
+                                        <dt>File Path</dt>
+                                        <dd><small>@Mapping.OldEntity?.FilePath</small></dd>
+                                        <dt>Properties</dt>
+                                        <dd>@Mapping.OldEntity?.Properties.Count properties</dd>
+                                    </dl>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card h-100">
+                                <div class="card-header bg-success bg-opacity-25">
+                                    <strong>New Entity</strong>
+                                </div>
+                                <div class="card-body">
+                                    <dl class="mb-0">
+                                        <dt>Class Name</dt>
+                                        <dd><code>@Mapping.NewEntity?.ClassName</code></dd>
+                                        <dt>Namespace</dt>
+                                        <dd><code>@Mapping.NewEntity?.Namespace</code></dd>
+                                        <dt>File Path</dt>
+                                        <dd><small>@Mapping.NewEntity?.FilePath</small></dd>
+                                        <dt>Properties</dt>
+                                        <dd>@Mapping.NewEntity?.Properties.Count properties</dd>
+                                    </dl>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Match Info -->
+                    <div class="card mb-4">
+                        <div class="card-header">
+                            <strong>Match Information</strong>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <strong>Confidence Score:</strong>
+                                    <span class="badge @GetConfidenceBadgeClass(Mapping.ConfidenceScore)">
+                                        @Mapping.ConfidenceScore.ToString("P1")
+                                    </span>
+                                </div>
+                                <div class="col-md-6">
+                                    <strong>Verified:</strong>
+                                    @if (Mapping.IsVerified)
+                                    {
+                                        <span class="badge bg-success">Yes</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-warning">No</span>
+                                    }
+                                </div>
+                            </div>
+                            @if (Mapping.MatchReasons.Any())
+                            {
+                                <div class="mt-3">
+                                    <strong>Match Reasons:</strong>
+                                    <ul class="small mb-0">
+                                        @foreach (var reason in Mapping.MatchReasons)
+                                        {
+                                            <li>@reason</li>
+                                        }
+                                    </ul>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Property Mappings Table -->
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <strong>Property Mappings (@_workingMappings.Count)</strong>
+                            <button class="btn btn-sm btn-primary" @onclick="AddCustomMapping">
+                                <i class="bi bi-plus-circle"></i> Add Custom Mapping
+                            </button>
+                        </div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 30%;">Old Property</th>
+                                            <th style="width: 15%;">Old Type</th>
+                                            <th style="width: 15%;">Action</th>
+                                            <th style="width: 25%;">New Property</th>
+                                            <th style="width: 15%;">New Type</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var pm in _workingMappings)
+                                        {
+                                            <tr class="@GetPropertyRowClass(pm)">
+                                                <td>
+                                                    <strong>@pm.OldPropertyName</strong>
+                                                    @if (!pm.IsMatched && pm.Action != MappingAction.Ignored)
+                                                    {
+                                                        <span class="badge bg-warning text-dark ms-1">Unmapped</span>
+                                                    }
+                                                </td>
+                                                <td><code class="small">@pm.OldPropertyType</code></td>
+                                                <td>
+                                                    <select class="form-select form-select-sm" 
+                                                            @onchange="@((e) => UpdatePropertyAction(pm, e.Value?.ToString()))">
+                                                        <option value="@MappingAction.Auto" selected="@(pm.Action == MappingAction.Auto)">Auto</option>
+                                                        <option value="@MappingAction.Manual" selected="@(pm.Action == MappingAction.Manual)">Manual</option>
+                                                        <option value="@MappingAction.Ignored" selected="@(pm.Action == MappingAction.Ignored)">Ignored</option>
+                                                    </select>
+                                                </td>
+                                                <td>
+                                                    @if (pm.Action != MappingAction.Ignored)
+                                                    {
+                                                        <select class="form-select form-select-sm" 
+                                                                @onchange="@((e) => UpdateNewProperty(pm, e.Value?.ToString()))">
+                                                            <option value="">-- Select --</option>
+                                                            @if (Mapping.NewEntity != null)
+                                                            {
+                                                                @foreach (var prop in Mapping.NewEntity.Properties.OrderBy(p => p.Name))
+                                                                {
+                                                                    <option value="@prop.Name" selected="@(pm.NewPropertyName == prop.Name)">
+                                                                        @prop.Name
+                                                                    </option>
+                                                                }
+                                                            }
+                                                        </select>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="text-muted">—</span>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    @if (!string.IsNullOrEmpty(pm.NewPropertyName))
+                                                    {
+                                                        <code class="small">@pm.NewPropertyType</code>
+                                                        @if (pm.OldPropertyType != pm.NewPropertyType)
+                                                        {
+                                                            <i class="bi bi-exclamation-triangle text-warning ms-1" 
+                                                               title="Type mismatch"></i>
+                                                        }
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(_errorMessage))
+                    {
+                        <div class="alert alert-danger mt-3" role="alert">
+                            <i class="bi bi-exclamation-triangle"></i> @_errorMessage
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="Close">
+                        <i class="bi bi-x-circle"></i> Cancel
+                    </button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveChanges">
+                        <i class="bi bi-check-circle"></i> Apply Changes
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public bool IsVisible { get; set; }
+
+    [Parameter]
+    public EntityMapping? Mapping { get; set; }
+
+    [Parameter]
+    public EventCallback<EntityMapping> OnSave { get; set; }
+
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    private List<PropertyMapping> _workingMappings = new();
+    private string? _errorMessage;
+
+    protected override void OnParametersSet()
+    {
+        if (IsVisible && Mapping != null)
+        {
+            // Create a working copy of property mappings
+            _workingMappings = Mapping.PropertyMappings
+                .Select(pm => new PropertyMapping
+                {
+                    OldPropertyName = pm.OldPropertyName,
+                    OldPropertyType = pm.OldPropertyType,
+                    NewPropertyName = pm.NewPropertyName,
+                    NewPropertyType = pm.NewPropertyType,
+                    IsMatched = pm.IsMatched,
+                    Action = pm.Action
+                })
+                .ToList();
+            _errorMessage = null;
+        }
+    }
+
+    private void UpdatePropertyAction(PropertyMapping pm, string? action)
+    {
+        if (Enum.TryParse<MappingAction>(action, out var mappingAction))
+        {
+            pm.Action = mappingAction;
+            
+            if (mappingAction == MappingAction.Ignored)
+            {
+                pm.NewPropertyName = string.Empty;
+                pm.NewPropertyType = string.Empty;
+                pm.IsMatched = false;
+            }
+            
+            StateHasChanged();
+        }
+    }
+
+    private void UpdateNewProperty(PropertyMapping pm, string? newPropertyName)
+    {
+        if (string.IsNullOrEmpty(newPropertyName))
+        {
+            pm.NewPropertyName = string.Empty;
+            pm.NewPropertyType = string.Empty;
+            pm.IsMatched = false;
+        }
+        else
+        {
+            var newProp = Mapping?.NewEntity?.Properties.FirstOrDefault(p => p.Name == newPropertyName);
+            if (newProp != null)
+            {
+                pm.NewPropertyName = newProp.Name;
+                pm.NewPropertyType = newProp.Type;
+                pm.IsMatched = true;
+                
+                // Mark as manual if user changed from auto
+                if (pm.Action == MappingAction.Auto)
+                {
+                    pm.Action = MappingAction.Manual;
+                }
+            }
+        }
+        
+        StateHasChanged();
+    }
+
+    private void AddCustomMapping()
+    {
+        // Find unmapped properties in the new entity
+        var mappedNewProps = _workingMappings
+            .Where(pm => !string.IsNullOrEmpty(pm.NewPropertyName))
+            .Select(pm => pm.NewPropertyName)
+            .ToHashSet();
+
+        var unmappedNewProp = Mapping?.NewEntity?.Properties
+            .FirstOrDefault(p => !mappedNewProps.Contains(p.Name));
+
+        if (unmappedNewProp != null && Mapping?.OldEntity != null)
+        {
+            // Try to find an unmapped old property
+            var mappedOldProps = _workingMappings.Select(pm => pm.OldPropertyName).ToHashSet();
+            var unmappedOldProp = Mapping.OldEntity.Properties
+                .FirstOrDefault(p => !mappedOldProps.Contains(p.Name));
+
+            if (unmappedOldProp != null)
+            {
+                _workingMappings.Add(new PropertyMapping
+                {
+                    OldPropertyName = unmappedOldProp.Name,
+                    OldPropertyType = unmappedOldProp.Type,
+                    NewPropertyName = unmappedNewProp.Name,
+                    NewPropertyType = unmappedNewProp.Type,
+                    IsMatched = true,
+                    Action = MappingAction.Manual
+                });
+            }
+        }
+    }
+
+    private async Task SaveChanges()
+    {
+        if (Mapping == null) return;
+
+        try
+        {
+            // Validate that all non-ignored properties have mappings
+            var unmapped = _workingMappings
+                .Where(pm => pm.Action != MappingAction.Ignored && string.IsNullOrEmpty(pm.NewPropertyName))
+                .ToList();
+
+            if (unmapped.Any())
+            {
+                _errorMessage = $"Please map or ignore all properties. {unmapped.Count} property(ies) still unmapped.";
+                return;
+            }
+
+            // Update the original mapping
+            Mapping.PropertyMappings = _workingMappings;
+
+            // Notify parent
+            await OnSave.InvokeAsync(Mapping);
+            await Close();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Error saving changes: {ex.Message}";
+        }
+    }
+
+    private async Task Close()
+    {
+        _errorMessage = null;
+        await OnClose.InvokeAsync();
+    }
+
+    private string GetConfidenceBadgeClass(double confidence)
+    {
+        return confidence switch
+        {
+            >= 0.8 => "bg-success",
+            >= 0.6 => "bg-warning",
+            _ => "bg-danger"
+        };
+    }
+
+    private string GetPropertyRowClass(PropertyMapping pm)
+    {
+        if (pm.Action == MappingAction.Ignored)
+            return "table-secondary";
+        if (!pm.IsMatched)
+            return "table-warning";
+        if (pm.Action == MappingAction.Manual)
+            return "table-info";
+        return "";
+    }
+}

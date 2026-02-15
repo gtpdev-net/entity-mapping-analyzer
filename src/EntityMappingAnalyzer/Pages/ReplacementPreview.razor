@@ -1,0 +1,480 @@
+@page "/replacement-preview"
+@using EntityMappingAnalyzer.Models
+@using EntityMappingAnalyzer.Services
+@inject MappingStorageService Storage
+@inject RoslynWorkspaceAnalyzer Analyzer
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject Microsoft.Extensions.Options.IOptions<MappingAnalyzerOptions> Options
+
+<PageTitle>Replacement Preview - Entity Mapping Analyzer</PageTitle>
+
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h2>Replacement Preview & Analysis</h2>
+            <p class="text-muted">Review changes before executing entity replacements</p>
+        </div>
+    </div>
+
+    @if (_isAnalyzing)
+    {
+        <div class="card mb-4">
+            <div class="card-body text-center">
+                <div class="spinner-border text-primary mb-3" role="status">
+                    <span class="visually-hidden">Analyzing...</span>
+                </div>
+                <h5>Analyzing Code References...</h5>
+                <p class="text-muted">@_analysisProgress</p>
+            </div>
+        </div>
+    }
+    else if (_selectedMappings == null || !_selectedMappings.Any())
+    {
+        <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle"></i>
+            No mappings selected for preview. Please select mappings from the <a href="/mappings">Mappings page</a>.
+        </div>
+        <button class="btn btn-secondary" @onclick="@(() => Navigation.NavigateTo("/mappings"))">
+            <i class="bi bi-arrow-left"></i> Back to Mappings
+        </button>
+    }
+    else
+    {
+        <!-- Summary Statistics -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-primary">@_selectedMappings.Count</h3>
+                        <p class="mb-0">Mappings Selected</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-info">@_totalReferences</h3>
+                        <p class="mb-0">Total References</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-warning">@_affectedFiles.Count</h3>
+                        <p class="mb-0">Files Affected</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-success">@_estimatedMinutes min</h3>
+                        <p class="mb-0">Est. Processing</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuration Options -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-gear"></i> Configuration</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">Target Codebase Path *</label>
+                    <input type="text" class="form-control" @bind="_targetPath" 
+                           placeholder="Enter path to solution or project file" />
+                    <small class="form-text text-muted">
+                        Path to the .sln or .csproj file where replacements will be executed
+                    </small>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" @bind="_createBackup" id="createBackup">
+                            <label class="form-check-label" for="createBackup">
+                                <i class="bi bi-shield-check"></i> Create backup before replacement
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" @bind="_deleteOldEntities" id="deleteOld">
+                            <label class="form-check-label" for="deleteOld">
+                                <i class="bi bi-trash"></i> Delete old entity files after replacement
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" @bind="_validateCompilation" id="validate">
+                            <label class="form-check-label" for="validate">
+                                <i class="bi bi-check-circle"></i> Validate compilation after replacement
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" @bind="_isDryRun" id="dryRun">
+                            <label class="form-check-label" for="dryRun">
+                                <i class="bi bi-eye"></i> Dry run (preview only, no changes)
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mappings Detail -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-list-check"></i> Mappings to Process</h5>
+                <button class="btn btn-sm btn-outline-primary" @onclick="AnalyzeReferencesAsync">
+                    <i class="bi bi-search"></i> Analyze References
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="accordion" id="mappingsAccordion">
+                    @foreach (var (mapping, index) in _selectedMappings.Select((m, i) => (m, i)))
+                    {
+                        var collapseId = $"collapse{index}";
+                        var references = _referencesByMapping.GetValueOrDefault(mapping.Id, new List<CodeLocation>());
+                        
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button @(index > 0 ? "collapsed" : "")" type="button" 
+                                        data-bs-toggle="collapse" data-bs-target="#@collapseId">
+                                    <div class="d-flex w-100 justify-content-between align-items-center me-3">
+                                        <div>
+                                            <strong>@mapping.OldEntity?.ClassName</strong>
+                                            <i class="bi bi-arrow-right mx-2"></i>
+                                            <strong class="text-primary">@mapping.NewEntity?.ClassName</strong>
+                                        </div>
+                                        <div>
+                                            <span class="badge bg-info me-2">
+                                                @mapping.ConfidenceScore.ToString("P0")
+                                            </span>
+                                            @if (references.Any())
+                                            {
+                                                <span class="badge bg-secondary">
+                                                    @references.Count references
+                                                </span>
+                                            }
+                                        </div>
+                                    </div>
+                                </button>
+                            </h2>
+                            <div id="@collapseId" class="accordion-collapse collapse @(index == 0 ? "show" : "")" 
+                                 data-bs-parent="#mappingsAccordion">
+                                <div class="accordion-body">
+                                    <div class="row mb-3">
+                                        <div class="col-md-6">
+                                            <h6>Old Entity</h6>
+                                            <p class="mb-1"><strong>Namespace:</strong> @mapping.OldEntity?.Namespace</p>
+                                            <p class="mb-1"><strong>File:</strong> @Path.GetFileName(mapping.OldEntity?.FilePath)</p>
+                                            <p class="mb-1"><strong>Properties:</strong> @mapping.OldEntity?.Properties.Count</p>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <h6>New Entity</h6>
+                                            <p class="mb-1"><strong>Namespace:</strong> @mapping.NewEntity?.Namespace</p>
+                                            <p class="mb-1"><strong>File:</strong> @Path.GetFileName(mapping.NewEntity?.FilePath)</p>
+                                            <p class="mb-1"><strong>Properties:</strong> @mapping.NewEntity?.Properties.Count</p>
+                                        </div>
+                                    </div>
+
+                                    @if (mapping.PropertyMappings.Any())
+                                    {
+                                        <h6>Property Mappings (@mapping.PropertyMappings.Count)</h6>
+                                        <div class="table-responsive mb-3">
+                                            <table class="table table-sm table-bordered">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Old Property</th>
+                                                        <th>Action</th>
+                                                        <th>New Property</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var pm in mapping.PropertyMappings.Take(5))
+                                                    {
+                                                        <tr>
+                                                            <td><code>@pm.OldPropertyName</code></td>
+                                                            <td>
+                                                                <span class="badge bg-@GetActionBadgeClass(pm.Action)">
+                                                                    @pm.Action
+                                                                </span>
+                                                            </td>
+                                                            <td><code>@pm.NewPropertyName</code></td>
+                                                        </tr>
+                                                    }
+                                                    @if (mapping.PropertyMappings.Count > 5)
+                                                    {
+                                                        <tr>
+                                                            <td colspan="3" class="text-muted text-center">
+                                                                ... and @(mapping.PropertyMappings.Count - 5) more
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    }
+
+                                    @if (references.Any())
+                                    {
+                                        <h6>Code References (@references.Count)</h6>
+                                        <div class="table-responsive">
+                                            <table class="table table-sm table-hover">
+                                                <thead>
+                                                    <tr>
+                                                        <th>File</th>
+                                                        <th>Line</th>
+                                                        <th>Type</th>
+                                                        <th>Snippet</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var loc in references.Take(10))
+                                                    {
+                                                        <tr>
+                                                            <td><small>@Path.GetFileName(loc.FilePath)</small></td>
+                                                            <td>@loc.LineNumber</td>
+                                                            <td><span class="badge bg-info">@loc.Type</span></td>
+                                                            <td><code style="font-size: 0.8em;">@loc.CodeSnippet.Trim()</code></td>
+                                                        </tr>
+                                                    }
+                                                    @if (references.Count > 10)
+                                                    {
+                                                        <tr>
+                                                            <td colspan="4" class="text-muted text-center">
+                                                                ... and @(references.Count - 10) more references
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    }
+                                    else if (_targetPath != null && !string.IsNullOrWhiteSpace(_targetPath))
+                                    {
+                                        <div class="alert alert-info mb-0">
+                                            <i class="bi bi-info-circle"></i> 
+                                            Click "Analyze References" to scan the target codebase for entity references.
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- Affected Files Summary -->
+        @if (_affectedFiles.Any())
+        {
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-files"></i> Affected Files (@_affectedFiles.Count)</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        @foreach (var file in _affectedFiles.Take(20))
+                        {
+                            var refCount = _referencesByMapping.Values
+                                .SelectMany(r => r)
+                                .Count(r => r.FilePath == file);
+                            
+                            <div class="col-md-6 mb-2">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <span class="text-truncate" title="@file">
+                                        <i class="bi bi-file-code"></i> @Path.GetFileName(file)
+                                    </span>
+                                    <span class="badge bg-secondary">@refCount refs</span>
+                                </div>
+                            </div>
+                        }
+                        @if (_affectedFiles.Count > 20)
+                        {
+                            <div class="col-12">
+                                <p class="text-muted text-center mb-0">
+                                    ... and @(_affectedFiles.Count - 20) more files
+                                </p>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- Action Buttons -->
+        <div class="d-flex justify-content-between mb-4">
+            <button class="btn btn-secondary btn-lg" @onclick="@(() => Navigation.NavigateTo("/mappings"))">
+                <i class="bi bi-arrow-left"></i> Back to Mappings
+            </button>
+            <button class="btn btn-primary btn-lg" @onclick="ProceedToExecutionAsync" 
+                    disabled="@string.IsNullOrWhiteSpace(_targetPath)">
+                <i class="bi bi-play-circle"></i> Continue to Replace
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    private List<EntityMapping>? _selectedMappings;
+    private string? _targetPath;
+    private bool _createBackup = true;
+    private bool _deleteOldEntities = false;
+    private bool _validateCompilation = true;
+    private bool _isDryRun = false;
+    private bool _isAnalyzing = false;
+    private string _analysisProgress = "";
+    
+    private Dictionary<string, List<CodeLocation>> _referencesByMapping = new();
+    private HashSet<string> _affectedFiles = new();
+    private int _totalReferences = 0;
+    private int _estimatedMinutes = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var uri = new Uri(Navigation.Uri);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        var mappingIdsParam = query["mappingIds"];
+
+        if (!string.IsNullOrEmpty(mappingIdsParam))
+        {
+            var mappingIds = mappingIdsParam.Split(',').ToHashSet();
+            var outputPath = GetAbsolutePath(Options.Value.DefaultOutputPath);
+            
+            if (Storage.Exists(outputPath))
+            {
+                var database = await Storage.LoadAsync(outputPath);
+                if (database != null)
+                {
+                    _selectedMappings = database.Mappings
+                        .Where(m => mappingIds.Contains(m.Id))
+                        .ToList();
+                }
+            }
+        }
+
+        // Try to load target path from localStorage
+        try
+        {
+            _targetPath = await JS.InvokeAsync<string>("localStorage.getItem", "targetCodebasePath");
+        }
+        catch
+        {
+            // Ignore if localStorage is not available
+        }
+
+        // Calculate initial estimate
+        if (_selectedMappings != null)
+        {
+            _estimatedMinutes = Math.Max(1, _selectedMappings.Count * 2); // 2 minutes per mapping estimate
+        }
+    }
+
+    private async Task AnalyzeReferencesAsync()
+    {
+        if (_selectedMappings == null || string.IsNullOrWhiteSpace(_targetPath)) return;
+
+        _isAnalyzing = true;
+        _referencesByMapping.Clear();
+        _affectedFiles.Clear();
+        _totalReferences = 0;
+        StateHasChanged();
+
+        try
+        {
+            foreach (var mapping in _selectedMappings)
+            {
+                if (mapping.OldEntity == null) continue;
+
+                _analysisProgress = $"Analyzing references to {mapping.OldEntity.ClassName}...";
+                StateHasChanged();
+
+                try
+                {
+                    var references = await Analyzer.FindEntityReferencesAsync(
+                        _targetPath, 
+                        mapping.OldEntity,
+                        CancellationToken.None);
+
+                    _referencesByMapping[mapping.Id] = references;
+                    _totalReferences += references.Count;
+
+                    foreach (var reference in references)
+                    {
+                        _affectedFiles.Add(reference.FilePath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _analysisProgress = $"Error analyzing {mapping.OldEntity.ClassName}: {ex.Message}";
+                    StateHasChanged();
+                }
+            }
+
+            // Update estimate based on actual references
+            _estimatedMinutes = Math.Max(1, (_totalReferences / 50) + _selectedMappings.Count);
+        }
+        finally
+        {
+            _isAnalyzing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ProceedToExecutionAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_targetPath) || _selectedMappings == null) return;
+
+        // Save target path to localStorage
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", "targetCodebasePath", _targetPath);
+        }
+        catch
+        {
+            // Ignore if localStorage is not available
+        }
+
+        // Create operation configuration
+        var operation = new ReplacementOperation
+        {
+            SelectedMappingIds = _selectedMappings.Select(m => m.Id).ToList(),
+            TargetCodebasePath = _targetPath,
+            CreateBackup = _createBackup,
+            DeleteOldEntities = _deleteOldEntities,
+            ValidateCompilation = _validateCompilation,
+            IsDryRun = _isDryRun
+        };
+
+        // Save to session storage and navigate
+        var operationJson = System.Text.Json.JsonSerializer.Serialize(operation);
+        await JS.InvokeVoidAsync("sessionStorage.setItem", "replacementOperation", operationJson);
+        
+        Navigation.NavigateTo("/replacement-execution");
+    }
+
+    private string GetActionBadgeClass(MappingAction action) => action switch
+    {
+        MappingAction.Auto => "success",
+        MappingAction.Manual => "warning",
+        MappingAction.Ignored => "danger",
+        _ => "secondary"
+    };
+
+    private string GetAbsolutePath(string path)
+    {
+        if (Path.IsPathRooted(path))
+            return path;
+
+        var currentDir = Directory.GetCurrentDirectory();
+        if (currentDir.EndsWith("bin/Debug/net8.0") || currentDir.EndsWith("bin\\Debug\\net8.0"))
+            currentDir = Path.GetFullPath(Path.Combine(currentDir, "..", "..", ".."));
+
+        return Path.GetFullPath(Path.Combine(currentDir, path));
+    }
+}

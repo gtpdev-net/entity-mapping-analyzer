@@ -1,0 +1,678 @@
+@using EntityMappingAnalyzer.Models
+@using EntityMappingAnalyzer.Services
+@inject MappingStorageService Storage
+@inject RoslynWorkspaceAnalyzer Analyzer
+@inject ReplacementOrchestratorService Orchestrator
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject Microsoft.Extensions.Options.IOptions<MappingAnalyzerOptions> Options
+
+<!-- Wizard Component -->
+<div class="card shadow-sm">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-magic"></i> Replacement Wizard</h5>
+    </div>
+    <div class="card-body">
+        <!-- Progress Steps -->
+        <div class="row mb-4">
+            <div class="col">
+                <div class="d-flex justify-content-between">
+                    @for (int i = 1; i <= 5; i++)
+                    {
+                        var stepNum = i;
+                        var isActive = _currentStep == stepNum;
+                        var isCompleted = stepNum < _currentStep;
+                        var stepClass = isActive ? "bg-primary text-white" : isCompleted ? "bg-success text-white" : "bg-secondary text-white";
+                        
+                        <div class="text-center" style="flex: 1;">
+                            <div class="rounded-circle @stepClass d-inline-flex justify-content-center align-items-center" 
+                                 style="width: 40px; height: 40px; font-weight: bold;">
+                                @if (isCompleted)
+                                {
+                                    <i class="bi bi-check-lg"></i>
+                                }
+                                else
+                                {
+                                    @stepNum
+                                }
+                            </div>
+                            <div class="mt-2">
+                                <small class="@(isActive ? "fw-bold" : "")">
+                                    @GetStepName(stepNum)
+                                </small>
+                            </div>
+                        </div>
+                        
+                        @if (i < 5)
+                        {
+                            <div class="d-flex align-items-center" style="flex: 0 0 50px;">
+                                <hr class="flex-grow-1 @(isCompleted ? "border-success" : "border-secondary")" 
+                                    style="border-width: 2px;" />
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+
+        <!-- Step Content -->
+        <div class="wizard-content">
+            @if (_currentStep == 1)
+            {
+                @StepSelection
+            }
+            else if (_currentStep == 2)
+            {
+                @StepConfiguration
+            }
+            else if (_currentStep == 3)
+            {
+                @StepPreview
+            }
+            else if (_currentStep == 4)
+            {
+                @StepExecution
+            }
+            else if (_currentStep == 5)
+            {
+                @StepResults
+            }
+        </div>
+
+        <!-- Navigation Buttons -->
+        <div class="d-flex justify-content-between mt-4">
+            <button class="btn btn-secondary" 
+                    @onclick="PreviousStep" 
+                    disabled="@(_currentStep == 1 || _isExecuting)">
+                <i class="bi bi-arrow-left"></i> Previous
+            </button>
+            
+            @if (_currentStep < 5)
+            {
+                <button class="btn btn-primary" 
+                        @onclick="NextStep" 
+                        disabled="@(!CanProceedToNextStep())">
+                    Next <i class="bi bi-arrow-right"></i>
+                </button>
+            }
+            else
+            {
+                <button class="btn btn-success" @onclick="Finish">
+                    <i class="bi bi-check-circle"></i> Finish
+                </button>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private int _currentStep = 1;
+    private bool _isExecuting = false;
+    private MappingDatabase? _database;
+    
+    // Step 1: Selection
+    private HashSet<string> _selectedMappingIds = new();
+    
+    // Step 2: Configuration
+    private string _targetPath = string.Empty;
+    private bool _createBackup = true;
+    private bool _deleteOldEntities = false;
+    private bool _validateCompilation = true;
+    private bool _isDryRun = false;
+    
+    // Step 3: Preview
+    private Dictionary<string, List<CodeLocation>> _referencesByMapping = new();
+    private bool _isAnalyzing = false;
+    private string _analysisProgress = string.Empty;
+    
+    // Step 4: Execution
+    private ReplacementOperation? _operation;
+    private List<string> _logMessages = new();
+    
+    protected override async Task OnInitializedAsync()
+    {
+        var outputPath = GetAbsolutePath(Options.Value.DefaultOutputPath);
+        if (Storage.Exists(outputPath))
+        {
+            _database = await Storage.LoadAsync(outputPath);
+        }
+
+        // Try to load saved target path
+        try
+        {
+            _targetPath = await JS.InvokeAsync<string>("localStorage.getItem", "targetCodebasePath") ?? string.Empty;
+        }
+        catch { }
+    }
+
+    // Step Navigation
+    private void PreviousStep()
+    {
+        if (_currentStep > 1 && !_isExecuting)
+        {
+            _currentStep--;
+            StateHasChanged();
+        }
+    }
+
+    private async Task NextStep()
+    {
+        if (!CanProceedToNextStep()) return;
+
+        if (_currentStep == 3 && _referencesByMapping.Count == 0)
+        {
+            // Auto-analyze before moving to step 4
+            await AnalyzeReferencesAsync();
+        }
+
+        _currentStep++;
+        
+        if (_currentStep == 4)
+        {
+            // Auto-start execution when reaching step 4
+            await StartExecutionAsync();
+        }
+        
+        StateHasChanged();
+    }
+
+    private void Finish()
+    {
+        Navigation.NavigateTo("/mappings");
+    }
+
+    private bool CanProceedToNextStep()
+    {
+        return _currentStep switch
+        {
+            1 => _selectedMappingIds.Any(),
+            2 => !string.IsNullOrWhiteSpace(_targetPath),
+            3 => true,
+            4 => !_isExecuting,
+            _ => false
+        };
+    }
+
+    private string GetStepName(int step) => step switch
+    {
+        1 => "Select",
+        2 => "Configure",
+        3 => "Preview",
+        4 => "Execute",
+        5 => "Results",
+        _ => ""
+    };
+
+    // Step 1: Selection
+    private RenderFragment StepSelection => __builder =>
+    {
+        <div>
+            <h4>Select Mappings to Replace</h4>
+            <p class="text-muted">Choose which entity mappings you want to process</p>
+
+            @if (_database == null || !_database.Mappings.Any())
+            {
+                <div class="alert alert-warning">
+                    No mappings available. Please run a scan first.
+                </div>
+            }
+            else
+            {
+                <div class="mb-3">
+                    <button class="btn btn-sm btn-outline-primary me-2" @onclick="SelectAllVerified">
+                        <i class="bi bi-check-square"></i> Select All Verified
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary me-2" @onclick="SelectAllReady">
+                        <i class="bi bi-check-square"></i> Select All Ready
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="ClearSelection">
+                        <i class="bi bi-x-square"></i> Clear Selection
+                    </button>
+                </div>
+
+                <div class="alert alert-info">
+                    <strong>@_selectedMappingIds.Count</strong> mapping(s) selected
+                </div>
+
+                <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                    <table class="table table-sm table-hover">
+                        <thead class="sticky-top bg-white">
+                            <tr>
+                                <th style="width: 40px;">
+                                    <input type="checkbox" class="form-check-input" 
+                                           @onchange="ToggleSelectAll"
+                                           checked="@(_selectedMappingIds.Count == _database.Mappings.Count)" />
+                                </th>
+                                <th>Old Entity</th>
+                                <th>New Entity</th>
+                                <th>Confidence</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var mapping in _database.Mappings)
+                            {
+                                var isSelected = _selectedMappingIds.Contains(mapping.Id);
+                                var rowClass = mapping.IsVerified ? "table-success" : "";
+                                
+                                <tr class="@rowClass" @onclick="@(() => ToggleMappingSelection(mapping.Id))" 
+                                    style="cursor: pointer;">
+                                    <td @onclick:stopPropagation="true">
+                                        <input type="checkbox" class="form-check-input" 
+                                               checked="@isSelected"
+                                               @onchange="@(() => ToggleMappingSelection(mapping.Id))" />
+                                    </td>
+                                    <td>@mapping.OldEntity?.ClassName</td>
+                                    <td>@mapping.NewEntity?.ClassName</td>
+                                    <td>@mapping.ConfidenceScore.ToString("P0")</td>
+                                    <td>
+                                        @if (mapping.IsVerified)
+                                        {
+                                            <span class="badge bg-success">Verified</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-warning">Unverified</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    };
+
+    // Step 2: Configuration
+    private RenderFragment StepConfiguration => __builder =>
+    {
+        <div>
+            <h4>Configure Replacement Options</h4>
+            <p class="text-muted">Set up the target location and replacement behavior</p>
+
+            <div class="mb-3">
+                <label class="form-label">Target Codebase Path *</label>
+                <input type="text" class="form-control" @bind="_targetPath" 
+                       placeholder="Enter path to solution or project file" />
+                <small class="form-text text-muted">
+                    Path to the .sln or .csproj file where replacements will be executed
+                </small>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" @bind="_createBackup" id="wizardBackup">
+                        <label class="form-check-label" for="wizardBackup">
+                            <i class="bi bi-shield-check text-success"></i> 
+                            <strong>Create backup before replacement</strong>
+                            <br><small class="text-muted">Recommended for safety</small>
+                        </label>
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" @bind="_deleteOldEntities" id="wizardDelete">
+                        <label class="form-check-label" for="wizardDelete">
+                            <i class="bi bi-trash text-warning"></i> 
+                            <strong>Delete old entity files</strong>
+                            <br><small class="text-muted">Remove old files after replacement</small>
+                        </label>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" @bind="_validateCompilation" id="wizardValidate">
+                        <label class="form-check-label" for="wizardValidate">
+                            <i class="bi bi-check-circle text-info"></i> 
+                            <strong>Validate compilation</strong>
+                            <br><small class="text-muted">Check for compile errors after replacement</small>
+                        </label>
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" @bind="_isDryRun" id="wizardDryRun">
+                        <label class="form-check-label" for="wizardDryRun">
+                            <i class="bi bi-eye text-primary"></i> 
+                            <strong>Dry run mode</strong>
+                            <br><small class="text-muted">Preview only, no actual changes</small>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="alert alert-info mb-0">
+                <i class="bi bi-info-circle"></i> 
+                <strong>Selected mappings:</strong> @_selectedMappingIds.Count
+            </div>
+        </div>
+    };
+
+    // Step 3: Preview
+    private RenderFragment StepPreview => __builder =>
+    {
+        <div>
+            <h4>Preview Changes</h4>
+            <p class="text-muted">Review the scope of replacements before execution</p>
+
+            @if (_isAnalyzing)
+            {
+                <div class="text-center py-4">
+                    <div class="spinner-border text-primary mb-3" role="status"></div>
+                    <p>@_analysisProgress</p>
+                </div>
+            }
+            else
+            {
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h4 class="text-primary">@_selectedMappingIds.Count</h4>
+                                <small>Mappings Selected</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h4 class="text-info">@_referencesByMapping.Values.Sum(r => r.Count)</h4>
+                                <small>Total References</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card text-center">
+                            <div class="card-body">
+                                <h4 class="text-warning">@_referencesByMapping.Values.SelectMany(r => r).Select(r => r.FilePath).Distinct().Count()</h4>
+                                <small>Files Affected</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                @if (!_referencesByMapping.Any())
+                {
+                    <div class="alert alert-warning">
+                        <i class="bi bi-info-circle"></i> 
+                        Click "Next" to analyze code references before execution.
+                    </div>
+                }
+                else
+                {
+                    <div class="alert alert-success">
+                        <i class="bi bi-check-circle"></i> 
+                        Analysis complete! Ready to proceed with replacement.
+                    </div>
+
+                    <h6>Summary by Mapping</h6>
+                    <div class="list-group">
+                        @foreach (var mappingId in _selectedMappingIds)
+                        {
+                            var mapping = _database?.Mappings.FirstOrDefault(m => m.Id == mappingId);
+                            var refCount = _referencesByMapping.GetValueOrDefault(mappingId, new List<CodeLocation>()).Count;
+                            
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>@mapping?.OldEntity?.ClassName</strong> 
+                                    <i class="bi bi-arrow-right"></i> 
+                                    @mapping?.NewEntity?.ClassName
+                                </div>
+                                <span class="badge bg-primary rounded-pill">@refCount refs</span>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        </div>
+    };
+
+    // Step 4: Execution
+    private RenderFragment StepExecution => __builder =>
+    {
+        <div>
+            <h4>Executing Replacements</h4>
+            <p class="text-muted">Please wait while the replacements are being processed...</p>
+
+            @if (_operation != null)
+            {
+                <div class="mb-4">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>Progress</span>
+                        <span><strong>@_operation.PercentComplete%</strong></span>
+                    </div>
+                    <div class="progress" style="height: 30px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                             style="width: @(_operation.PercentComplete)%">
+                            @_operation.ProcessedMappings / @_operation.TotalMappings
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between">
+                        <span>Activity Log</span>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="ClearLog">
+                            <i class="bi bi-trash"></i> Clear
+                        </button>
+                    </div>
+                    <div class="card-body p-2" style="max-height: 300px; overflow-y: auto; background-color: #f8f9fa;">
+                        <pre class="mb-0" style="font-size: 0.85em;">@string.Join("\n", _logMessages)</pre>
+                    </div>
+                </div>
+            }
+        </div>
+    };
+
+    // Step 5: Results
+    private RenderFragment StepResults => __builder =>
+    {
+        <div>
+            <h4>Replacement Complete</h4>
+            <p class="text-muted">Summary of the replacement operation</p>
+
+            @if (_operation != null)
+            {
+                var completedCount = _operation.Results.Count(r => r.Status == ReplacementStatus.Completed);
+                var failedCount = _operation.Results.Count(r => r.Status == ReplacementStatus.Failed);
+                var skippedCount = _operation.Results.Count(r => r.Status == ReplacementStatus.Skipped);
+
+                <div class="row text-center mb-4">
+                    <div class="col-md-4">
+                        <div class="card border-success">
+                            <div class="card-body">
+                                <h2 class="text-success">@completedCount</h2>
+                                <p class="mb-0">Completed</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card border-danger">
+                            <div class="card-body">
+                                <h2 class="text-danger">@failedCount</h2>
+                                <p class="mb-0">Failed</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card border-warning">
+                            <div class="card-body">
+                                <h2 class="text-warning">@skippedCount</h2>
+                                <p class="mb-0">Skipped</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                @if (failedCount > 0)
+                {
+                    <div class="alert alert-danger">
+                        <h6><i class="bi bi-exclamation-triangle"></i> Some replacements failed</h6>
+                        <ul class="mb-0">
+                            @foreach (var result in _operation.Results.Where(r => r.HasErrors))
+                            {
+                                <li>
+                                    @(_database?.Mappings.FirstOrDefault(m => m.Id == result.MappingId)?.OldEntity?.ClassName ?? "Unknown"):
+                                    @string.Join(", ", result.Errors.Take(2))
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+                else
+                {
+                    <div class="alert alert-success">
+                        <i class="bi bi-check-circle"></i> 
+                        All replacements completed successfully!
+                    </div>
+                }
+
+                @if (_operation.IsDryRun)
+                {
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle"></i> 
+                        <strong>Dry Run:</strong> No actual changes were made to your codebase.
+                    </div>
+                }
+            }
+        </div>
+    };
+
+    // Helper Methods
+    private void ToggleMappingSelection(string mappingId)
+    {
+        if (_selectedMappingIds.Contains(mappingId))
+            _selectedMappingIds.Remove(mappingId);
+        else
+            _selectedMappingIds.Add(mappingId);
+        
+        StateHasChanged();
+    }
+
+    private void ToggleSelectAll()
+    {
+        if (_database == null) return;
+
+        if (_selectedMappingIds.Count == _database.Mappings.Count)
+            _selectedMappingIds.Clear();
+        else
+            _selectedMappingIds = _database.Mappings.Select(m => m.Id).ToHashSet();
+        
+        StateHasChanged();
+    }
+
+    private void SelectAllVerified()
+    {
+        if (_database == null) return;
+        _selectedMappingIds = _database.Mappings.Where(m => m.IsVerified).Select(m => m.Id).ToHashSet();
+        StateHasChanged();
+    }
+
+    private void SelectAllReady()
+    {
+        if (_database == null) return;
+        _selectedMappingIds = _database.Mappings.Where(m => m.IsReadyForReplacement).Select(m => m.Id).ToHashSet();
+        StateHasChanged();
+    }
+
+    private void ClearSelection()
+    {
+        _selectedMappingIds.Clear();
+        StateHasChanged();
+    }
+
+    private async Task AnalyzeReferencesAsync()
+    {
+        if (_database == null || !_selectedMappingIds.Any()) return;
+
+        _isAnalyzing = true;
+        StateHasChanged();
+
+        try
+        {
+            var selectedMappings = _database.Mappings.Where(m => _selectedMappingIds.Contains(m.Id));
+            
+            foreach (var mapping in selectedMappings)
+            {
+                if (mapping.OldEntity == null) continue;
+
+                _analysisProgress = $"Analyzing {mapping.OldEntity.ClassName}...";
+                StateHasChanged();
+
+                try
+                {
+                    var references = await Analyzer.FindEntityReferencesAsync(
+                        _targetPath,
+                        mapping.OldEntity,
+                        CancellationToken.None);
+
+                    _referencesByMapping[mapping.Id] = references;
+                }
+                catch { }
+            }
+        }
+        finally
+        {
+            _isAnalyzing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task StartExecutionAsync()
+    {
+        if (_database == null) return;
+
+        _isExecuting = true;
+        _logMessages.Clear();
+
+        var selectedMappings = _database.Mappings.Where(m => _selectedMappingIds.Contains(m.Id)).ToList();
+
+        _operation = new ReplacementOperation
+        {
+            SelectedMappingIds = _selectedMappingIds.ToList(),
+            TargetCodebasePath = _targetPath,
+            CreateBackup = _createBackup,
+            DeleteOldEntities = _deleteOldEntities,
+            ValidateCompilation = _validateCompilation,
+            IsDryRun = _isDryRun
+        };
+
+        var progress = new Progress<string>(message =>
+        {
+            _logMessages.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
+            InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            _operation = await Orchestrator.ExecuteReplacementAsync(_operation, progress);
+        }
+        catch (Exception ex)
+        {
+            _logMessages.Add($"[{DateTime.Now:HH:mm:ss}] ERROR: {ex.Message}");
+        }
+        finally
+        {
+            _isExecuting = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ClearLog()
+    {
+        _logMessages.Clear();
+        StateHasChanged();
+    }
+
+    private string GetAbsolutePath(string path)
+    {
+        if (Path.IsPathRooted(path))
+            return path;
+
+        var currentDir = Directory.GetCurrentDirectory();
+        if (currentDir.EndsWith("bin/Debug/net8.0") || currentDir.EndsWith("bin\\Debug\\net8.0"))
+            currentDir = Path.GetFullPath(Path.Combine(currentDir, "..", "..", ".."));
+
+        return Path.GetFullPath(Path.Combine(currentDir, path));
+    }
+}

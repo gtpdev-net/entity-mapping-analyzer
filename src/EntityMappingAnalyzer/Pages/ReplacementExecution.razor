@@ -1,0 +1,406 @@
+@page "/replacement-execution"
+@using EntityMappingAnalyzer.Models
+@using EntityMappingAnalyzer.Services
+@inject ReplacementOrchestratorService Orchestrator
+@inject MappingStorageService Storage
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h2>Execute Entity Replacement</h2>
+            <p class="text-muted">Real-time progress of entity replacement operation</p>
+        </div>
+    </div>
+
+    @if (_operation == null)
+    {
+        <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle"></i>
+            No replacement operation configured. Please go back to the Mappings page.
+        </div>
+        <button class="btn btn-secondary" @onclick="@(() => Navigation.NavigateTo("/mappings"))">
+            <i class="bi bi-arrow-left"></i> Back to Mappings
+        </button>
+    }
+    else if (!_isExecuting && !_isComplete)
+    {
+        <!-- Configuration Summary -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Operation Configuration</h5>
+            </div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-3">Target Codebase:</dt>
+                    <dd class="col-sm-9">
+                        <input type="text" class="form-control" @bind="_operation.TargetCodebasePath" />
+                    </dd>
+
+                    <dt class="col-sm-3">Selected Mappings:</dt>
+                    <dd class="col-sm-9">@_operation.TotalMappings mapping(s)</dd>
+
+                    <dt class="col-sm-3">Options:</dt>
+                    <dd class="col-sm-9">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" @bind="_operation.CreateBackup" id="createBackup">
+                            <label class="form-check-label" for="createBackup">
+                                Create backup before replacement
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" @bind="_operation.DeleteOldEntities" id="deleteOld">
+                            <label class="form-check-label" for="deleteOld">
+                                Delete old entity files after replacement
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" @bind="_operation.ValidateCompilation" id="validate">
+                            <label class="form-check-label" for="validate">
+                                Validate compilation after replacement
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" @bind="_operation.IsDryRun" id="dryRun">
+                            <label class="form-check-label" for="dryRun">
+                                Dry run (preview only, no changes)
+                            </label>
+                        </div>
+                    </dd>
+                </dl>
+            </div>
+        </div>
+
+        <div class="mb-4">
+            <button class="btn btn-primary btn-lg" @onclick="StartReplacementAsync" disabled="@string.IsNullOrWhiteSpace(_operation.TargetCodebasePath)">
+                <i class="bi bi-play-circle"></i> Start Replacement
+            </button>
+            <button class="btn btn-secondary btn-lg ms-2" @onclick="@(() => Navigation.NavigateTo("/mappings"))">
+                <i class="bi bi-arrow-left"></i> Back to Mappings
+            </button>
+        </div>
+    }
+    else if (_isExecuting)
+    {
+        <!-- Progress Tracking -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Progress</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between mb-1">
+                        <span>Overall Progress</span>
+                        <span><strong>@_operation.PercentComplete%</strong> (@_operation.ProcessedMappings / @_operation.TotalMappings)</span>
+                    </div>
+                    <div class="progress" style="height: 30px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                             role="progressbar" 
+                             style="width: @(_operation.PercentComplete)%"
+                             aria-valuenow="@_operation.PercentComplete" 
+                             aria-valuemin="0" 
+                             aria-valuemax="100">
+                            @_operation.PercentComplete%
+                        </div>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrEmpty(_currentMapping))
+                {
+                    <div class="alert alert-info">
+                        <i class="bi bi-arrow-right-circle spinner-border spinner-border-sm"></i>
+                        <strong>Current:</strong> @_currentMapping
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Per-Mapping Status -->
+        @if (_operation.Results.Any())
+        {
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">Mapping Status</h5>
+                </div>
+                <div class="card-body">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th style="width: 50px;">Status</th>
+                                <th>Mapping</th>
+                                <th style="width: 100px;">Files</th>
+                                <th style="width: 100px;">Changes</th>
+                                <th style="width: 100px;">Duration</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var result in _operation.Results)
+                            {
+                                var mapping = _mappings.FirstOrDefault(m => m.Id == result.MappingId);
+                                <tr>
+                                    <td>
+                                        @switch (result.Status)
+                                        {
+                                            case ReplacementStatus.Completed:
+                                                <i class="bi bi-check-circle-fill text-success" title="Completed"></i>
+                                                break;
+                                            case ReplacementStatus.Failed:
+                                                <i class="bi bi-x-circle-fill text-danger" title="Failed"></i>
+                                                break;
+                                            case ReplacementStatus.Skipped:
+                                                <i class="bi bi-dash-circle-fill text-warning" title="Skipped"></i>
+                                                break;
+                                            case ReplacementStatus.InProgress:
+                                                <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                                    <span class="visually-hidden">In progress...</span>
+                                                </div>
+                                                break;
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (mapping != null)
+                                        {
+                                            <span>@mapping.OldEntity?.ClassName → @mapping.NewEntity?.ClassName</span>
+                                        }
+                                        else
+                                        {
+                                            <span>@result.MappingId</span>
+                                        }
+                                        @if (result.HasErrors)
+                                        {
+                                            <span class="badge bg-danger ms-2">@result.Errors.Count error(s)</span>
+                                        }
+                                    </td>
+                                    <td>@result.FilesModified</td>
+                                    <td>@result.TotalReplacements</td>
+                                    <td>@result.Duration.TotalSeconds.ToString("F1")s</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+
+        <!-- Live Log -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Live Log</h5>
+                <button class="btn btn-sm btn-outline-secondary" @onclick="ClearLog">
+                    <i class="bi bi-trash"></i> Clear
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="log-container" style="max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 12px; background-color: #f8f9fa; padding: 10px; border-radius: 4px;">
+                    @foreach (var logEntry in _logMessages)
+                    {
+                        <div>@logEntry</div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+    else if (_isComplete)
+    {
+        <!-- Completion Summary -->
+        <div class="card mb-4">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-check-circle"></i> Replacement Operation Complete
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-3">
+                        <div class="display-6 text-success">@_operation.Results.Count(r => r.Status == ReplacementStatus.Completed)</div>
+                        <div class="text-muted">Completed</div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="display-6 text-danger">@_operation.Results.Count(r => r.Status == ReplacementStatus.Failed)</div>
+                        <div class="text-muted">Failed</div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="display-6 text-warning">@_operation.Results.Count(r => r.Status == ReplacementStatus.Skipped)</div>
+                        <div class="text-muted">Skipped</div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="display-6">@_operation.Results.Sum(r => r.FilesModified)</div>
+                        <div class="text-muted">Files Modified</div>
+                    </div>
+                </div>
+
+                <hr />
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <strong>Total Replacements:</strong> @_operation.Results.Sum(r => r.TotalReplacements)
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Duration:</strong> @FormatDuration((_operation.EndTime ?? DateTime.UtcNow) - _operation.StartTime)
+                    </div>
+                </div>
+
+                @if (_operation.IsDryRun)
+                {
+                    <div class="alert alert-info mt-3 mb-0">
+                        <i class="bi bi-info-circle"></i>
+                        <strong>Dry Run:</strong> This was a preview only. No actual changes were made to your codebase.
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Error Summary -->
+        @if (_operation.Results.Any(r => r.HasErrors))
+        {
+            <div class="card mb-4">
+                <div class="card-header bg-danger text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-exclamation-triangle"></i> Errors
+                    </h5>
+                </div>
+                <div class="card-body">
+                    @foreach (var result in _operation.Results.Where(r => r.HasErrors))
+                    {
+                        var mapping = _mappings.FirstOrDefault(m => m.Id == result.MappingId);
+                        <div class="mb-3">
+                            <strong>@mapping?.OldEntity?.ClassName:</strong>
+                            <ul class="mb-0">
+                                @foreach (var error in result.Errors)
+                                {
+                                    <li>@error</li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
+        <!-- Actions -->
+        <div class="mb-4">
+            <button class="btn btn-primary btn-lg" @onclick="@(() => Navigation.NavigateTo("/mappings"))">
+                <i class="bi bi-arrow-left"></i> Back to Mappings
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    private ReplacementOperation? _operation;
+    private List<EntityMapping> _mappings = new();
+    private bool _isExecuting = false;
+    private bool _isComplete = false;
+    private string _currentMapping = string.Empty;
+    private List<string> _logMessages = new();
+
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "mappingIds")]
+    public string? MappingIdsQuery { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Load mapping database
+        var database = await Storage.LoadAsync(Storage.GetDefaultFilePath());
+        if (database != null)
+        {
+            _mappings = database.Mappings;
+
+            // Initialize operation from query string
+            if (!string.IsNullOrEmpty(MappingIdsQuery))
+            {
+                var ids = MappingIdsQuery.Split(',').ToList();
+                _operation = new ReplacementOperation
+                {
+                    SelectedMappingIds = ids,
+                    CreateBackup = true,
+                    DeleteOldEntities = false,
+                    ValidateCompilation = true,
+                    IsDryRun = false,
+                    TargetCodebasePath = string.Empty
+                };
+            }
+        }
+
+        // Restore from local storage if available
+        try
+        {
+            var savedPath = await JS.InvokeAsync<string>("localStorage.getItem", "targetCodebasePath");
+            if (!string.IsNullOrEmpty(savedPath) && _operation != null)
+            {
+                _operation.TargetCodebasePath = savedPath;
+            }
+        }
+        catch
+        {
+            // Ignore errors reading from localStorage
+        }
+    }
+
+    private async Task StartReplacementAsync()
+    {
+        if (_operation == null || string.IsNullOrWhiteSpace(_operation.TargetCodebasePath))
+        {
+            return;
+        }
+
+        _isExecuting = true;
+        _isComplete = false;
+        _logMessages.Clear();
+        StateHasChanged();
+
+        // Save path to local storage
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", "targetCodebasePath", _operation.TargetCodebasePath);
+        }
+        catch
+        {
+            // Ignore errors writing to localStorage
+        }
+
+        // Create progress reporter
+        var progress = new Progress<string>(message =>
+        {
+            _logMessages.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
+            
+            // Update current mapping if the message indicates processing
+            if (message.StartsWith("Processing:"))
+            {
+                _currentMapping = message.Substring("Processing:".Length).Trim();
+            }
+
+            // Invoke UI update on the Blazor thread
+            InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            // Execute replacement operation
+            _operation = await Orchestrator.ExecuteReplacementAsync(_operation, progress);
+        }
+        catch (Exception ex)
+        {
+            _logMessages.Add($"[{DateTime.Now:HH:mm:ss}] FATAL ERROR: {ex.Message}");
+        }
+        finally
+        {
+            _isExecuting = false;
+            _isComplete = true;
+            _currentMapping = string.Empty;
+            StateHasChanged();
+        }
+    }
+
+    private void ClearLog()
+    {
+        _logMessages.Clear();
+        StateHasChanged();
+    }
+
+    private string FormatDuration(TimeSpan duration)
+    {
+        return duration.ToString(@"mm\:ss");
+    }
+}

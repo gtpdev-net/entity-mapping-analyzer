@@ -1,0 +1,106 @@
+@inherits LayoutComponentBase
+
+<div class="page">
+    <div class="sidebar">
+        <nav class="flex-column">
+            <div class="nav-item px-3">
+                <h3 class="text-white">Entity Mapping Analyzer</h3>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                    <span class="oi oi-home" aria-hidden="true"></span> Dashboard
+                </NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="mappings">
+                    <span class="oi oi-list" aria-hidden="true"></span> Mappings
+                </NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="manual-mapping">
+                    <span class="oi oi-plus" aria-hidden="true"></span> Manual Mapping
+                </NavLink>
+            </div>
+            <div class="nav-item px-3 mt-3">
+                <h6 class="text-white-50">Replacement</h6>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="replacement-execution">
+                    <span class="oi oi-media-play" aria-hidden="true"></span> Execute
+                </NavLink>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="replacement-results">
+                    <span class="oi oi-bar-chart" aria-hidden="true"></span> Results
+                </NavLink>
+            </div>
+            <div class="nav-item px-3 mt-3">
+                <h6 class="text-white-50">Configuration</h6>
+            </div>
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="settings">
+                    <span class="oi oi-cog" aria-hidden="true"></span> Settings
+                </NavLink>
+            </div>
+        </nav>
+    </div>
+
+    <main>
+        <div class="top-row px-4">
+            <span class="text-muted">DACPAC Entity Replacement Tool</span>
+        </div>
+
+        <article class="content px-4">
+            @Body
+        </article>
+    </main>
+</div>
+
+<ErrorNotification />
+
+<style>
+    .page {
+        display: flex;
+        height: 100vh;
+    }
+
+    .sidebar {
+        background-color: #343a40;
+        width: 250px;
+        padding: 1rem;
+    }
+
+    .sidebar .nav-link {
+        color: rgba(255, 255, 255, 0.8);
+        padding: 0.5rem 1rem;
+        display: block;
+        text-decoration: none;
+    }
+
+    .sidebar .nav-link:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+        color: white;
+    }
+
+    .sidebar .nav-link.active {
+        background-color: #0d6efd;
+        color: white;
+    }
+
+    main {
+        flex: 1;
+        overflow-y: auto;
+    }
+
+    .top-row {
+        background-color: #f7f7f7;
+        border-bottom: 1px solid #d6d5d5;
+        height: 3.5rem;
+        display: flex;
+        align-items: center;
+    }
+
+    .content {
+        padding: 1.5rem !important;
+    }
+</style>

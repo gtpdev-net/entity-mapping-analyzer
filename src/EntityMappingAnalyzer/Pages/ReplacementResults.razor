@@ -1,0 +1,430 @@
+@page "/replacement-results"
+@using EntityMappingAnalyzer.Models
+@using EntityMappingAnalyzer.Services
+@inject MappingStorageService Storage
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject Microsoft.Extensions.Options.IOptions<MappingAnalyzerOptions> Options
+
+<PageTitle>Replacement Results - Entity Mapping Analyzer</PageTitle>
+
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h2>Replacement Results Report</h2>
+            <p class="text-muted">Detailed analysis of completed entity replacements</p>
+        </div>
+    </div>
+
+    @if (_database == null)
+    {
+        <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle"></i>
+            No mapping database found. Please run a scan from the <a href="/">Dashboard</a> first.
+        </div>
+    }
+    else
+    {
+        <!-- Overall Summary -->
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card bg-gradient" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                    <div class="card-body text-white">
+                        <div class="row text-center">
+                            <div class="col-md-2">
+                                <div class="display-4">@_database.TotalMappings</div>
+                                <div>Total Mappings</div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="display-4">@_completedCount</div>
+                                <div>Completed</div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="display-4">@_failedCount</div>
+                                <div>Failed</div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="display-4">@_skippedCount</div>
+                                <div>Skipped</div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="display-4">@_notStartedCount</div>
+                                <div>Not Started</div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="display-4">@_successRate%</div>
+                                <div>Success Rate</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filter Options -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-funnel"></i> Filter Results</h5>
+            </div>
+            <div class="card-body">
+                <div class="btn-group" role="group">
+                    <input type="radio" class="btn-check" name="statusFilter" id="filterAll" 
+                           checked="@(_filterStatus == null)" @onclick="@(() => SetFilter(null))">
+                    <label class="btn btn-outline-primary" for="filterAll">
+                        All (@_database.TotalMappings)
+                    </label>
+
+                    <input type="radio" class="btn-check" name="statusFilter" id="filterCompleted"
+                           checked="@(_filterStatus == ReplacementStatus.Completed)" 
+                           @onclick="@(() => SetFilter(ReplacementStatus.Completed))">
+                    <label class="btn btn-outline-success" for="filterCompleted">
+                        Completed (@_completedCount)
+                    </label>
+
+                    <input type="radio" class="btn-check" name="statusFilter" id="filterFailed"
+                           checked="@(_filterStatus == ReplacementStatus.Failed)"
+                           @onclick="@(() => SetFilter(ReplacementStatus.Failed))">
+                    <label class="btn btn-outline-danger" for="filterFailed">
+                        Failed (@_failedCount)
+                    </label>
+
+                    <input type="radio" class="btn-check" name="statusFilter" id="filterSkipped"
+                           checked="@(_filterStatus == ReplacementStatus.Skipped)"
+                           @onclick="@(() => SetFilter(ReplacementStatus.Skipped))">
+                    <label class="btn btn-outline-warning" for="filterSkipped">
+                        Skipped (@_skippedCount)
+                    </label>
+
+                    <input type="radio" class="btn-check" name="statusFilter" id="filterNotStarted"
+                           checked="@(_filterStatus == ReplacementStatus.NotStarted)"
+                           @onclick="@(() => SetFilter(ReplacementStatus.NotStarted))">
+                    <label class="btn btn-outline-secondary" for="filterNotStarted">
+                        Not Started (@_notStartedCount)
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detailed Results Table -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-list-ul"></i> Detailed Results</h5>
+                <div>
+                    <button class="btn btn-sm btn-outline-primary me-2" @onclick="ExportToJsonAsync">
+                        <i class="bi bi-download"></i> Export JSON
+                    </button>
+                    <button class="btn btn-sm btn-outline-success" @onclick="ExportToMarkdownAsync">
+                        <i class="bi bi-file-text"></i> Export Markdown
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="accordion" id="resultsAccordion">
+                    @foreach (var (mapping, index) in GetFilteredMappings().Select((m, i) => (m, i)))
+                    {
+                        var collapseId = $"result{index}";
+                        var statusClass = GetStatusClass(mapping.ReplacementStatus);
+                        var statusIcon = GetStatusIcon(mapping.ReplacementStatus);
+                        
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" 
+                                        data-bs-toggle="collapse" data-bs-target="#@collapseId">
+                                    <div class="d-flex w-100 justify-content-between align-items-center me-3">
+                                        <div class="d-flex align-items-center">
+                                            <i class="bi @statusIcon me-2"></i>
+                                            <strong>@mapping.OldEntity?.ClassName</strong>
+                                            <i class="bi bi-arrow-right mx-2"></i>
+                                            <strong class="text-primary">@mapping.NewEntity?.ClassName</strong>
+                                        </div>
+                                        <div>
+                                            <span class="badge bg-@statusClass me-2">
+                                                @mapping.ReplacementStatus
+                                            </span>
+                                            @if (mapping.LastReplacedDate.HasValue)
+                                            {
+                                                <span class="text-muted small">
+                                                    @mapping.LastReplacedDate.Value.ToString("MMM dd, yyyy HH:mm")
+                                                </span>
+                                            }
+                                        </div>
+                                    </div>
+                                </button>
+                            </h2>
+                            <div id="@collapseId" class="accordion-collapse collapse" 
+                                 data-bs-parent="#resultsAccordion">
+                                <div class="accordion-body">
+                                    @if (mapping.ReplacementResult != null)
+                                    {
+                                        var result = mapping.ReplacementResult;
+                                        
+                                        <div class="row mb-3">
+                                            <div class="col-md-3">
+                                                <div class="card text-center">
+                                                    <div class="card-body">
+                                                        <h5>@result.FilesModified</h5>
+                                                        <small class="text-muted">Files Modified</small>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="card text-center">
+                                                    <div class="card-body">
+                                                        <h5>@result.TotalReplacements</h5>
+                                                        <small class="text-muted">Total Replacements</small>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="card text-center">
+                                                    <div class="card-body">
+                                                        <h5>@result.TotalReplacements</h5>
+                                                        <small class="text-muted">Total Replacements</small>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="card text-center">
+                                                    <div class="card-body">
+                                                        <h5>@FormatDuration(result.Duration)</h5>
+                                                        <small class="text-muted">Processing Time</small>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        @if (result.LocationsModified.Any())
+                                        {
+                                            var modifiedFiles = result.LocationsModified.Select(l => l.FilePath).Distinct().ToList();
+                                            <h6>ModifiedFiles (@modifiedFiles.Count)</h6>
+                                            <ul class="list-group mb-3">
+                                                @foreach (var file in modifiedFiles.Take(10))
+                                                {
+                                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                        <small>@file</small>
+                                                        <span class="badge bg-success rounded-pill">
+                                                            <i class="bi bi-check"></i>
+                                                        </span>
+                                                    </li>
+                                                }
+                                                @if (modifiedFiles.Count > 10)
+                                                {
+                                                    <li class="list-group-item text-muted text-center">
+                                                        ... and @(modifiedFiles.Count - 10) more files
+                                                    </li>
+                                                }
+                                            </ul>
+                                        }
+
+                                        @if (result.HasErrors)
+                                        {
+                                            <div class="alert alert-danger">
+                                                <h6><i class="bi bi-exclamation-triangle"></i> Errors</h6>
+                                                <ul class="mb-0">
+                                                    @foreach (var error in result.Errors)
+                                                    {
+                                                        <li>@error</li>
+                                                    }
+                                                </ul>
+                                            </div>
+                                        }
+
+                                        <div class="alert alert-info mb-0">
+                                            <i class="bi bi-info-circle"></i> 
+                                            Replacement completed at @result.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="alert alert-secondary mb-0">
+                                            <i class="bi bi-info-circle"></i> 
+                                            No replacement has been executed for this mapping yet.
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                @if (!GetFilteredMappings().Any())
+                {
+                    <div class="text-center text-muted py-5">
+                        <i class="bi bi-inbox" style="font-size: 3rem;"></i>
+                        <p class="mt-2">No mappings match the selected filter.</p>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="d-flex justify-content-between mb-4">
+            <button class="btn btn-secondary btn-lg" @onclick="@(() => Navigation.NavigateTo("/mappings"))">
+                <i class="bi bi-arrow-left"></i> Back to Mappings
+            </button>
+            <div>
+                @if (_database.Mappings.Any(m => m.ReplacementStatus == ReplacementStatus.Failed))
+                {
+                    <button class="btn btn-warning btn-lg me-2" @onclick="RetryFailed">
+                        <i class="bi bi-arrow-clockwise"></i> Retry Failed
+                    </button>
+                }
+                <button class="btn btn-primary btn-lg" @onclick="@(() => Navigation.NavigateTo("/"))">
+                    <i class="bi bi-house"></i> Dashboard
+                </button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private MappingDatabase? _database;
+    private ReplacementStatus? _filterStatus = null;
+    
+    private int _completedCount = 0;
+    private int _failedCount = 0;
+    private int _skippedCount = 0;
+    private int _notStartedCount = 0;
+    private int _successRate = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var outputPath = GetAbsolutePath(Options.Value.DefaultOutputPath);
+        
+        if (Storage.Exists(outputPath))
+        {
+            _database = await Storage.LoadAsync(outputPath);
+            if (_database != null)
+            {
+                CalculateStatistics();
+            }
+        }
+    }
+
+    private void CalculateStatistics()
+    {
+        if (_database == null) return;
+
+        _completedCount = _database.Mappings.Count(m => m.ReplacementStatus == ReplacementStatus.Completed);
+        _failedCount = _database.Mappings.Count(m => m.ReplacementStatus == ReplacementStatus.Failed);
+        _skippedCount = _database.Mappings.Count(m => m.ReplacementStatus == ReplacementStatus.Skipped);
+        _notStartedCount = _database.Mappings.Count(m => m.ReplacementStatus == ReplacementStatus.NotStarted);
+
+        var totalProcessed = _completedCount + _failedCount + _skippedCount;
+        _successRate = totalProcessed > 0 ? (int)Math.Round((_completedCount * 100.0) / totalProcessed) : 0;
+    }
+
+    private IEnumerable<EntityMapping> GetFilteredMappings()
+    {
+        if (_database == null) return Enumerable.Empty<EntityMapping>();
+
+        if (_filterStatus.HasValue)
+        {
+            return _database.Mappings.Where(m => m.ReplacementStatus == _filterStatus.Value);
+        }
+
+        return _database.Mappings;
+    }
+
+    private void SetFilter(ReplacementStatus? status)
+    {
+        _filterStatus = status;
+        StateHasChanged();
+    }
+
+    private string GetStatusClass(ReplacementStatus status) => status switch
+    {
+        ReplacementStatus.Completed => "success",
+        ReplacementStatus.Failed => "danger",
+        ReplacementStatus.Skipped => "warning",
+        ReplacementStatus.InProgress => "primary",
+        _ => "secondary"
+    };
+
+    private string GetStatusIcon(ReplacementStatus status) => status switch
+    {
+        ReplacementStatus.Completed => "bi-check-circle-fill text-success",
+        ReplacementStatus.Failed => "bi-x-circle-fill text-danger",
+        ReplacementStatus.Skipped => "bi-dash-circle-fill text-warning",
+        ReplacementStatus.InProgress => "bi-hourglass-split text-primary",
+        _ => "bi-circle text-secondary"
+    };
+
+    private string FormatDuration(TimeSpan duration)
+    {
+        if (duration.TotalHours >= 1)
+            return $"{duration.TotalHours:F1}h";
+        if (duration.TotalMinutes >= 1)
+            return $"{duration.TotalMinutes:F1}m";
+        return $"{duration.TotalSeconds:F1}s";
+    }
+
+    private async Task ExportToJsonAsync()
+    {
+        if (_database == null) return;
+
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(_database, new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+            var filename = $"replacement-results-{DateTime.Now:yyyyMMdd-HHmmss}.json";
+            await JS.InvokeVoidAsync("downloadFile", filename, "application/json", json);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error exporting JSON: {ex.Message}");
+        }
+    }
+
+    private async Task ExportToMarkdownAsync()
+    {
+        if (_database == null) return;
+
+        try
+        {
+            var outputPath = GetAbsolutePath(Options.Value.DefaultOutputPath);
+            var markdownPath = outputPath.Replace(".json", "-results.md");
+            await Storage.ExportToMarkdownAsync(_database, markdownPath);
+            
+            // Trigger download via JS
+            var markdown = await File.ReadAllTextAsync(markdownPath);
+            var filename = $"replacement-results-{DateTime.Now:yyyyMMdd-HHmmss}.md";
+            await JS.InvokeVoidAsync("downloadFile", filename, "text/markdown", markdown);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error exporting Markdown: {ex.Message}");
+        }
+    }
+
+    private void RetryFailed()
+    {
+        if (_database == null) return;
+
+        var failedIds = _database.Mappings
+            .Where(m => m.ReplacementStatus == ReplacementStatus.Failed)
+            .Select(m => m.Id)
+            .ToList();
+
+        if (failedIds.Any())
+        {
+            var mappingIdsParam = string.Join(",", failedIds);
+            Navigation.NavigateTo($"/replacement-preview?mappingIds={Uri.EscapeDataString(mappingIdsParam)}");
+        }
+    }
+
+    private string GetAbsolutePath(string path)
+    {
+        if (Path.IsPathRooted(path))
+            return path;
+
+        var currentDir = Directory.GetCurrentDirectory();
+        if (currentDir.EndsWith("bin/Debug/net8.0") || currentDir.EndsWith("bin\\Debug\\net8.0"))
+            currentDir = Path.GetFullPath(Path.Combine(currentDir, "..", "..", ".."));
+
+        return Path.GetFullPath(Path.Combine(currentDir, path));
+    }
+}

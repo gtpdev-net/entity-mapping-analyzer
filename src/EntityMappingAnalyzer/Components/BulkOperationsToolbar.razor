@@ -1,0 +1,358 @@
+@using EntityMappingAnalyzer.Models
+@inject MappingStorageService StorageService
+
+<div class="card mb-3">
+    <div class="card-body">
+        <div class="row align-items-center">
+            <div class="col-md-8">
+                <div class="btn-toolbar" role="toolbar">
+                    <!-- Selection Actions -->
+                    <div class="btn-group me-2" role="group">
+                        <button type="button" class="btn btn-outline-primary btn-sm" 
+                                @onclick="SelectAllVerified"
+                                disabled="@IsProcessing">
+                            <i class="bi bi-check-square"></i> Select All Verified
+                        </button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" 
+                                @onclick="SelectAllHighConfidence"
+                                disabled="@IsProcessing">
+                            <i class="bi bi-star"></i> Select High Confidence (>80%)
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" 
+                                @onclick="ClearSelection"
+                                disabled="@(!HasSelection || IsProcessing)">
+                            <i class="bi bi-x-square"></i> Clear Selection
+                        </button>
+                    </div>
+
+                    <!-- Bulk Actions -->
+                    <div class="btn-group me-2" role="group">
+                        <button type="button" class="btn btn-success btn-sm" 
+                                @onclick="VerifySelected"
+                                disabled="@(!HasSelection || IsProcessing)">
+                            <i class="bi bi-check-circle"></i> Verify Selected
+                        </button>
+                        <button type="button" class="btn btn-warning btn-sm" 
+                                @onclick="UnverifySelected"
+                                disabled="@(!HasSelection || IsProcessing)">
+                            <i class="bi bi-x-circle"></i> Unverify Selected
+                        </button>
+                    </div>
+
+                    <!-- Export Actions -->
+                    <div class="btn-group" role="group">
+                        <button type="button" class="btn btn-info btn-sm" 
+                                @onclick="ExportToMarkdown"
+                                disabled="@IsProcessing">
+                            <i class="bi bi-file-earmark-text"></i> Export Report
+                        </button>
+                        <button type="button" class="btn btn-danger btn-sm" 
+                                @onclick="DeleteSelected"
+                                disabled="@(!HasSelection || IsProcessing)">
+                            <i class="bi bi-trash"></i> Delete Selected
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-4 text-end">
+                @if (HasSelection)
+                {
+                    <span class="badge bg-primary fs-6">@SelectedCount selected</span>
+                }
+                else
+                {
+                    <span class="text-muted small">No items selected</span>
+                }
+            </div>
+        </div>
+
+        @if (IsProcessing)
+        {
+            <div class="progress mt-3" style="height: 5px;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                     role="progressbar" 
+                     style="width: 100%"></div>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(_message))
+        {
+            <div class="alert @_messageClass mt-3 mb-0" role="alert">
+                <i class="bi @_messageIcon"></i> @_message
+            </div>
+        }
+    </div>
+</div>
+
+<!-- Confirmation Modal -->
+@if (_showConfirmation)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-exclamation-triangle text-warning"></i> Confirm Action
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="CancelConfirmation"></button>
+                </div>
+                <div class="modal-body">
+                    <p>@_confirmationMessage</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CancelConfirmation">
+                        Cancel
+                    </button>
+                    <button type="button" class="btn btn-danger" @onclick="ConfirmAction">
+                        Confirm
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public MappingDatabase? Database { get; set; }
+
+    [Parameter]
+    public HashSet<string> SelectedMappingIds { get; set; } = new();
+
+    [Parameter]
+    public EventCallback<HashSet<string>> OnSelectionChanged { get; set; }
+
+    [Parameter]
+    public EventCallback OnDataChanged { get; set; }
+
+    private bool IsProcessing { get; set; }
+    private bool HasSelection => SelectedMappingIds.Any();
+    private int SelectedCount => SelectedMappingIds.Count;
+
+    private string? _message;
+    private string _messageClass = "alert-info";
+    private string _messageIcon = "bi-info-circle";
+
+    private bool _showConfirmation;
+    private string _confirmationMessage = string.Empty;
+    private Action? _confirmedAction;
+
+    private void SelectAllVerified()
+    {
+        if (Database == null) return;
+
+        SelectedMappingIds.Clear();
+        foreach (var mapping in Database.Mappings.Where(m => m.IsVerified))
+        {
+            var id = GetMappingId(mapping);
+            SelectedMappingIds.Add(id);
+        }
+
+        OnSelectionChanged.InvokeAsync(SelectedMappingIds);
+        ShowMessage($"Selected {SelectedCount} verified mapping(s)", "info");
+    }
+
+    private void SelectAllHighConfidence()
+    {
+        if (Database == null) return;
+
+        SelectedMappingIds.Clear();
+        foreach (var mapping in Database.Mappings.Where(m => m.ConfidenceScore >= 0.8))
+        {
+            var id = GetMappingId(mapping);
+            SelectedMappingIds.Add(id);
+        }
+
+        OnSelectionChanged.InvokeAsync(SelectedMappingIds);
+        ShowMessage($"Selected {SelectedCount} high confidence mapping(s)", "info");
+    }
+
+    private void ClearSelection()
+    {
+        SelectedMappingIds.Clear();
+        OnSelectionChanged.InvokeAsync(SelectedMappingIds);
+        _message = null;
+    }
+
+    private async Task VerifySelected()
+    {
+        if (Database == null || !HasSelection) return;
+
+        IsProcessing = true;
+        try
+        {
+            var count = 0;
+            foreach (var mapping in Database.Mappings)
+            {
+                var id = GetMappingId(mapping);
+                if (SelectedMappingIds.Contains(id))
+                {
+                    mapping.IsVerified = true;
+                    count++;
+                }
+            }
+
+            await SaveDatabase();
+            ShowMessage($"✓ Verified {count} mapping(s)", "success");
+            SelectedMappingIds.Clear();
+            await OnSelectionChanged.InvokeAsync(SelectedMappingIds);
+            await OnDataChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"Error: {ex.Message}", "danger");
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private async Task UnverifySelected()
+    {
+        if (Database == null || !HasSelection) return;
+
+        IsProcessing = true;
+        try
+        {
+            var count = 0;
+            foreach (var mapping in Database.Mappings)
+            {
+                var id = GetMappingId(mapping);
+                if (SelectedMappingIds.Contains(id))
+                {
+                    mapping.IsVerified = false;
+                    count++;
+                }
+            }
+
+            await SaveDatabase();
+            ShowMessage($"✓ Unverified {count} mapping(s)", "success");
+            SelectedMappingIds.Clear();
+            await OnSelectionChanged.InvokeAsync(SelectedMappingIds);
+            await OnDataChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"Error: {ex.Message}", "danger");
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private async Task ExportToMarkdown()
+    {
+        if (Database == null) return;
+
+        IsProcessing = true;
+        try
+        {
+            var filePath = StorageService.GetDefaultFilePath().Replace(".json", "-report.md");
+            await StorageService.ExportToMarkdownAsync(Database, filePath);
+            ShowMessage($"✓ Report exported to {Path.GetFileName(filePath)}", "success");
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"Error exporting: {ex.Message}", "danger");
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private void DeleteSelected()
+    {
+        if (!HasSelection) return;
+
+        _confirmationMessage = $"Are you sure you want to delete {SelectedCount} selected mapping(s)? This action cannot be undone.";
+        _confirmedAction = async () => await ExecuteDelete();
+        _showConfirmation = true;
+    }
+
+    private async Task ExecuteDelete()
+    {
+        if (Database == null || !HasSelection) return;
+
+        IsProcessing = true;
+        try
+        {
+            var toRemove = Database.Mappings
+                .Where(m => SelectedMappingIds.Contains(GetMappingId(m)))
+                .ToList();
+
+            foreach (var mapping in toRemove)
+            {
+                Database.Mappings.Remove(mapping);
+            }
+
+            await SaveDatabase();
+            ShowMessage($"✓ Deleted {toRemove.Count} mapping(s)", "success");
+            SelectedMappingIds.Clear();
+            await OnSelectionChanged.InvokeAsync(SelectedMappingIds);
+            await OnDataChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            ShowMessage($"Error deleting: {ex.Message}", "danger");
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private void ConfirmAction()
+    {
+        _showConfirmation = false;
+        _confirmedAction?.Invoke();
+        _confirmedAction = null;
+    }
+
+    private void CancelConfirmation()
+    {
+        _showConfirmation = false;
+        _confirmedAction = null;
+    }
+
+    private async Task SaveDatabase()
+    {
+        if (Database == null) return;
+        Database.LastModifiedDate = DateTime.UtcNow;
+        await StorageService.SaveAsync(Database, StorageService.GetDefaultFilePath());
+    }
+
+    private string GetMappingId(EntityMapping mapping)
+    {
+        return $"{mapping.OldEntity?.ClassName}_{mapping.NewEntity?.ClassName}";
+    }
+
+    private void ShowMessage(string message, string type)
+    {
+        _message = message;
+        _messageClass = type switch
+        {
+            "success" => "alert-success",
+            "danger" => "alert-danger",
+            "warning" => "alert-warning",
+            _ => "alert-info"
+        };
+        _messageIcon = type switch
+        {
+            "success" => "bi-check-circle",
+            "danger" => "bi-exclamation-triangle",
+            "warning" => "bi-exclamation-triangle",
+            _ => "bi-info-circle"
+        };
+
+        // Auto-clear message after 5 seconds
+        Task.Delay(5000).ContinueWith(_ =>
+        {
+            _message = null;
+            InvokeAsync(StateHasChanged);
+        });
+    }
+}

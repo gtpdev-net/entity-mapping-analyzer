@@ -1,0 +1,195 @@
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index: 9999;">
+    @foreach (var notification in _notifications)
+    {
+        <div class="toast show @GetToastClass(notification.Severity)" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header @GetHeaderClass(notification.Severity)">
+                <i class="bi @GetIcon(notification.Severity) me-2"></i>
+                <strong class="me-auto">@GetTitle(notification.Severity)</strong>
+                <small>@notification.Timestamp.ToString("HH:mm:ss")</small>
+                <button type="button" class="btn-close" @onclick="() => DismissNotification(notification.Id)"></button>
+            </div>
+            <div class="toast-body">
+                @notification.Message
+                @if (!string.IsNullOrEmpty(notification.Details))
+                {
+                    <details class="mt-2">
+                        <summary class="text-muted small" style="cursor: pointer;">Details</summary>
+                        <pre class="small mb-0 mt-1">@notification.Details</pre>
+                    </details>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private List<Notification> _notifications = new();
+    private System.Threading.Timer? _timer;
+    private static ErrorNotification? _instance;
+
+    public enum NotificationSeverity
+    {
+        Success,
+        Info,
+        Warning,
+        Error
+    }
+
+    private class Notification
+    {
+        public Guid Id { get; set; } = Guid.NewGuid();
+        public string Message { get; set; } = string.Empty;
+        public string? Details { get; set; }
+        public NotificationSeverity Severity { get; set; }
+        public DateTime Timestamp { get; set; } = DateTime.Now;
+        public int DurationMs { get; set; }
+    }
+
+    protected override void OnInitialized()
+    {
+        _instance = this;
+        
+        // Check for expired notifications every second
+        _timer = new System.Threading.Timer(async _ =>
+        {
+            var now = DateTime.Now;
+            var expired = _notifications
+                .Where(n => (now - n.Timestamp).TotalMilliseconds >= n.DurationMs)
+                .ToList();
+
+            if (expired.Any())
+            {
+                foreach (var notification in expired)
+                {
+                    _notifications.Remove(notification);
+                }
+                await InvokeAsync(StateHasChanged);
+            }
+        }, null, 1000, 1000);
+    }
+
+    public static void ShowSuccess(string message, string? details = null, int durationMs = 5000)
+    {
+        _instance?.AddNotification(message, details, NotificationSeverity.Success, durationMs);
+    }
+
+    public static void ShowInfo(string message, string? details = null, int durationMs = 5000)
+    {
+        _instance?.AddNotification(message, details, NotificationSeverity.Info, durationMs);
+    }
+
+    public static void ShowWarning(string message, string? details = null, int durationMs = 7000)
+    {
+        _instance?.AddNotification(message, details, NotificationSeverity.Warning, durationMs);
+    }
+
+    public static void ShowError(string message, string? details = null, int durationMs = 10000)
+    {
+        _instance?.AddNotification(message, details, NotificationSeverity.Error, durationMs);
+    }
+
+    public static void ShowException(Exception ex, string? context = null)
+    {
+        var message = !string.IsNullOrEmpty(context) 
+            ? $"{context}: {ex.Message}" 
+            : ex.Message;
+        
+        _instance?.AddNotification(
+            message, 
+            ex.StackTrace, 
+            NotificationSeverity.Error, 
+            15000
+        );
+    }
+
+    private void AddNotification(string message, string? details, NotificationSeverity severity, int durationMs)
+    {
+        var notification = new Notification
+        {
+            Message = message,
+            Details = details,
+            Severity = severity,
+            DurationMs = durationMs
+        };
+
+        _notifications.Insert(0, notification);
+
+        // Limit to 5 visible notifications
+        if (_notifications.Count > 5)
+        {
+            _notifications.RemoveAt(_notifications.Count - 1);
+        }
+
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void DismissNotification(Guid id)
+    {
+        var notification = _notifications.FirstOrDefault(n => n.Id == id);
+        if (notification != null)
+        {
+            _notifications.Remove(notification);
+            StateHasChanged();
+        }
+    }
+
+    private string GetToastClass(NotificationSeverity severity)
+    {
+        return severity switch
+        {
+            NotificationSeverity.Success => "border-success",
+            NotificationSeverity.Info => "border-info",
+            NotificationSeverity.Warning => "border-warning",
+            NotificationSeverity.Error => "border-danger",
+            _ => ""
+        };
+    }
+
+    private string GetHeaderClass(NotificationSeverity severity)
+    {
+        return severity switch
+        {
+            NotificationSeverity.Success => "bg-success bg-opacity-10 text-success",
+            NotificationSeverity.Info => "bg-info bg-opacity-10 text-info",
+            NotificationSeverity.Warning => "bg-warning bg-opacity-10 text-warning",
+            NotificationSeverity.Error => "bg-danger bg-opacity-10 text-danger",
+            _ => ""
+        };
+    }
+
+    private string GetIcon(NotificationSeverity severity)
+    {
+        return severity switch
+        {
+            NotificationSeverity.Success => "bi-check-circle-fill",
+            NotificationSeverity.Info => "bi-info-circle-fill",
+            NotificationSeverity.Warning => "bi-exclamation-triangle-fill",
+            NotificationSeverity.Error => "bi-x-circle-fill",
+            _ => "bi-bell-fill"
+        };
+    }
+
+    private string GetTitle(NotificationSeverity severity)
+    {
+        return severity switch
+        {
+            NotificationSeverity.Success => "Success",
+            NotificationSeverity.Info => "Information",
+            NotificationSeverity.Warning => "Warning",
+            NotificationSeverity.Error => "Error",
+            _ => "Notification"
+        };
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+        if (_instance == this)
+        {
+            _instance = null;
+        }
+    }
+}

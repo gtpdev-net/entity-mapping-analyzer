@@ -1,0 +1,381 @@
+@page "/settings"
+@using EntityMappingAnalyzer.Models
+@using Microsoft.Extensions.Options
+@inject IConfiguration Configuration
+@inject IOptions<MappingAnalyzerOptions> MappingOptions
+@inject IOptions<ReplacementSettings> ReplacementOptions
+@inject IJSRuntime JS
+
+<PageTitle>Settings - Entity Mapping Analyzer</PageTitle>
+
+<div class="container-fluid py-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h2>Settings</h2>
+            <p class="text-muted">Configure application preferences and replacement options</p>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-8">
+            <!-- Mapping Analyzer Settings -->
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-gear"></i> Mapping Configuration
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label for="defaultOldPath" class="form-label fw-bold">Default Old Entities Path</label>
+                        <input type="text" 
+                               id="defaultOldPath" 
+                               class="form-control" 
+                               @bind="_mappingConfig.DefaultOldEntitiesPath" 
+                               placeholder="./existing-entities" />
+                        <div class="form-text">Default path for scanning existing entity classes</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="defaultDacpacPath" class="form-label fw-bold">Default DACPAC Entities Path</label>
+                        <input type="text" 
+                               id="defaultDacpacPath" 
+                               class="form-control" 
+                               @bind="_mappingConfig.DefaultDacpacEntitiesPath" 
+                               placeholder="./output" />
+                        <div class="form-text">Default path for scanning generated DACPAC entities</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="defaultOutputPath" class="form-label fw-bold">Default Output File Path</label>
+                        <input type="text" 
+                               id="defaultOutputPath" 
+                               class="form-control" 
+                               @bind="_mappingConfig.DefaultOutputPath" 
+                               placeholder="./entity-mapping.json" />
+                        <div class="form-text">Default path for saving mapping database JSON</div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="highThreshold" class="form-label fw-bold">
+                                High Confidence Threshold: @_mappingConfig.ConfidenceThresholdHigh.ToString("P0")
+                            </label>
+                            <input type="range" 
+                                   class="form-range" 
+                                   id="highThreshold" 
+                                   min="50" 
+                                   max="100" 
+                                   value="@((int)(_mappingConfig.ConfidenceThresholdHigh * 100))"
+                                   @oninput="@((e) => _mappingConfig.ConfidenceThresholdHigh = int.Parse(e.Value?.ToString() ?? "80") / 100.0)" />
+                            <div class="form-text">Mappings above this are considered high confidence (green)</div>
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            <label for="mediumThreshold" class="form-label fw-bold">
+                                Medium Confidence Threshold: @_mappingConfig.ConfidenceThresholdMedium.ToString("P0")
+                            </label>
+                            <input type="range" 
+                                   class="form-range" 
+                                   id="mediumThreshold" 
+                                   min="0" 
+                                   max="100" 
+                                   value="@((int)(_mappingConfig.ConfidenceThresholdMedium * 100))"
+                                   @oninput="@((e) => _mappingConfig.ConfidenceThresholdMedium = int.Parse(e.Value?.ToString() ?? "60") / 100.0)" />
+                            <div class="form-text">Minimum threshold for creating auto-mappings</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Replacement Settings -->
+            <div class="card mb-4">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-arrow-repeat"></i> Replacement Options
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" 
+                               type="checkbox" 
+                               id="autoBackup" 
+                               @bind="_replacementConfig.AutoBackup" />
+                        <label class="form-check-label" for="autoBackup">
+                            <strong>Auto-create Backups</strong>
+                        </label>
+                        <div class="form-text">Automatically create ZIP backup before replacement operations</div>
+                    </div>
+
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" 
+                               type="checkbox" 
+                               id="validateCompilation" 
+                               @bind="_replacementConfig.ValidateCompilation" />
+                        <label class="form-check-label" for="validateCompilation">
+                            <strong>Validate Compilation</strong>
+                        </label>
+                        <div class="form-text">Run <code>dotnet build</code> after replacement to verify no errors</div>
+                    </div>
+
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" 
+                               type="checkbox" 
+                               id="deleteOldEntities" 
+                               @bind="_replacementConfig.DeleteOldEntities" />
+                        <label class="form-check-label text-warning" for="deleteOldEntities">
+                            <strong>Delete Old Entity Files</strong>
+                        </label>
+                        <div class="form-text">Automatically delete old entity files after successful replacement</div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="retentionDays" class="form-label fw-bold">Backup Retention Days</label>
+                            <input type="number" 
+                                   id="retentionDays" 
+                                   class="form-control" 
+                                   @bind="_replacementConfig.BackupRetentionDays" 
+                                   min="1" 
+                                   max="365" />
+                            <div class="form-text">Keep backups for this many days before auto-cleanup</div>
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            <label for="maxConcurrent" class="form-label fw-bold">Max Concurrent Replacements</label>
+                            <input type="number" 
+                                   id="maxConcurrent" 
+                                   class="form-control" 
+                                   @bind="_replacementConfig.MaxConcurrentReplacements" 
+                                   min="1" 
+                                   max="20" />
+                            <div class="form-text">Maximum parallel replacement operations</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="d-flex gap-2">
+                <button class="btn btn-primary" @onclick="SaveSettings" disabled="@_isSaving">
+                    @if (_isSaving)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                    }
+                    <i class="bi bi-save"></i> Save Settings
+                </button>
+                <button class="btn btn-secondary" @onclick="ResetToDefaults">
+                    <i class="bi bi-arrow-counterclockwise"></i> Reset to Defaults
+                </button>
+            </div>
+
+            @if (!string.IsNullOrEmpty(_saveMessage))
+            {
+                <div class="alert alert-success mt-3" role="alert">
+                    <i class="bi bi-check-circle"></i> @_saveMessage
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(_errorMessage))
+            {
+                <div class="alert alert-danger mt-3" role="alert">
+                    <i class="bi bi-exclamation-triangle"></i> @_errorMessage
+                </div>
+            }
+        </div>
+
+        <!-- Info Panel -->
+        <div class="col-md-4">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h6 class="mb-0">
+                        <i class="bi bi-info-circle"></i> About Settings
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <h6 class="text-muted">Current Configuration</h6>
+                    <dl class="small mb-0">
+                        <dt>Configuration Source</dt>
+                        <dd>appsettings.json</dd>
+                        
+                        <dt>Settings Persistence</dt>
+                        <dd>Browser LocalStorage</dd>
+                        
+                        <dt>Backup Directory</dt>
+                        <dd><code>./backups/</code></dd>
+                        
+                        <dt>Archive Directory</dt>
+                        <dd><code>./archived-entities/</code></dd>
+                    </dl>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header bg-warning">
+                    <h6 class="mb-0">
+                        <i class="bi bi-exclamation-triangle"></i> Important Notes
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-warning alert-sm mb-2">
+                        <small>
+                            <strong>Settings Scope:</strong> Changes are saved to browser LocalStorage and affect only your current session.
+                        </small>
+                    </div>
+                    <div class="alert alert-info alert-sm mb-0">
+                        <small>
+                            <strong>Server Defaults:</strong> To change server-wide defaults, edit <code>appsettings.json</code> and restart the application.
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private MappingAnalyzerOptions _mappingConfig = new();
+    private ReplacementSettings _replacementConfig = new();
+    
+    private bool _isSaving = false;
+    private string? _saveMessage;
+    private string? _errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Load current configuration from options
+        _mappingConfig = new MappingAnalyzerOptions
+        {
+            DefaultOldEntitiesPath = MappingOptions.Value.DefaultOldEntitiesPath,
+            DefaultDacpacEntitiesPath = MappingOptions.Value.DefaultDacpacEntitiesPath,
+            DefaultOutputPath = MappingOptions.Value.DefaultOutputPath,
+            ConfidenceThresholdHigh = MappingOptions.Value.ConfidenceThresholdHigh,
+            ConfidenceThresholdMedium = MappingOptions.Value.ConfidenceThresholdMedium
+        };
+
+        _replacementConfig = new ReplacementSettings
+        {
+            AutoBackup = ReplacementOptions.Value.AutoBackup,
+            ValidateCompilation = ReplacementOptions.Value.ValidateCompilation,
+            DeleteOldEntities = ReplacementOptions.Value.DeleteOldEntities,
+            BackupRetentionDays = ReplacementOptions.Value.BackupRetentionDays,
+            MaxConcurrentReplacements = ReplacementOptions.Value.MaxConcurrentReplacements
+        };
+
+        // Try to load user preferences from LocalStorage
+        await LoadUserPreferences();
+    }
+
+    private async Task LoadUserPreferences()
+    {
+        try
+        {
+            // Load mapping config from LocalStorage
+            var oldPath = await JS.InvokeAsync<string>("localStorage.getItem", "settings.defaultOldPath");
+            if (!string.IsNullOrEmpty(oldPath))
+                _mappingConfig.DefaultOldEntitiesPath = oldPath;
+
+            var dacpacPath = await JS.InvokeAsync<string>("localStorage.getItem", "settings.defaultDacpacPath");
+            if (!string.IsNullOrEmpty(dacpacPath))
+                _mappingConfig.DefaultDacpacEntitiesPath = dacpacPath;
+
+            var outputPath = await JS.InvokeAsync<string>("localStorage.getItem", "settings.defaultOutputPath");
+            if (!string.IsNullOrEmpty(outputPath))
+                _mappingConfig.DefaultOutputPath = outputPath;
+
+            var highThreshold = await JS.InvokeAsync<string>("localStorage.getItem", "settings.confidenceHigh");
+            if (!string.IsNullOrEmpty(highThreshold) && double.TryParse(highThreshold, out var high))
+                _mappingConfig.ConfidenceThresholdHigh = high;
+
+            var mediumThreshold = await JS.InvokeAsync<string>("localStorage.getItem", "settings.confidenceMedium");
+            if (!string.IsNullOrEmpty(mediumThreshold) && double.TryParse(mediumThreshold, out var medium))
+                _mappingConfig.ConfidenceThresholdMedium = medium;
+
+            // Load replacement config from LocalStorage
+            var autoBackup = await JS.InvokeAsync<string>("localStorage.getItem", "settings.autoBackup");
+            if (!string.IsNullOrEmpty(autoBackup) && bool.TryParse(autoBackup, out var backup))
+                _replacementConfig.AutoBackup = backup;
+
+            var validateCompilation = await JS.InvokeAsync<string>("localStorage.getItem", "settings.validateCompilation");
+            if (!string.IsNullOrEmpty(validateCompilation) && bool.TryParse(validateCompilation, out var validate))
+                _replacementConfig.ValidateCompilation = validate;
+
+            var deleteOld = await JS.InvokeAsync<string>("localStorage.getItem", "settings.deleteOldEntities");
+            if (!string.IsNullOrEmpty(deleteOld) && bool.TryParse(deleteOld, out var delete))
+                _replacementConfig.DeleteOldEntities = delete;
+
+            var retention = await JS.InvokeAsync<string>("localStorage.getItem", "settings.backupRetention");
+            if (!string.IsNullOrEmpty(retention) && int.TryParse(retention, out var days))
+                _replacementConfig.BackupRetentionDays = days;
+
+            var maxConcurrent = await JS.InvokeAsync<string>("localStorage.getItem", "settings.maxConcurrent");
+            if (!string.IsNullOrEmpty(maxConcurrent) && int.TryParse(maxConcurrent, out var max))
+                _replacementConfig.MaxConcurrentReplacements = max;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading user preferences: {ex.Message}");
+        }
+    }
+
+    private async Task SaveSettings()
+    {
+        _isSaving = true;
+        _saveMessage = null;
+        _errorMessage = null;
+
+        try
+        {
+            // Save to LocalStorage
+            await JS.InvokeVoidAsync("localStorage.setItem", "settings.defaultOldPath", _mappingConfig.DefaultOldEntitiesPath);
+            await JS.InvokeVoidAsync("localStorage.setItem", "settings.defaultDacpacPath", _mappingConfig.DefaultDacpacEntitiesPath);
+            await JS.InvokeVoidAsync("localStorage.setItem", "settings.defaultOutputPath", _mappingConfig.DefaultOutputPath);
+            await JS.InvokeVoidAsync("localStorage.setItem", "settings.confidenceHigh", _mappingConfig.ConfidenceThresholdHigh.ToString());
+            await JS.InvokeVoidAsync("localStorage.setItem", "settings.confidenceMedium", _mappingConfig.ConfidenceThresholdMedium.ToString());
+            
+            await JS.InvokeVoidAsync("localStorage.setItem", "settings.autoBackup", _replacementConfig.AutoBackup.ToString());
+            await JS.InvokeVoidAsync("localStorage.setItem", "settings.validateCompilation", _replacementConfig.ValidateCompilation.ToString());
+            await JS.InvokeVoidAsync("localStorage.setItem", "settings.deleteOldEntities", _replacementConfig.DeleteOldEntities.ToString());
+            await JS.InvokeVoidAsync("localStorage.setItem", "settings.backupRetention", _replacementConfig.BackupRetentionDays.ToString());
+            await JS.InvokeVoidAsync("localStorage.setItem", "settings.maxConcurrent", _replacementConfig.MaxConcurrentReplacements.ToString());
+
+            _saveMessage = "✓ Settings saved successfully to browser storage!";
+            
+            // Clear message after 3 seconds
+            await Task.Delay(3000);
+            _saveMessage = null;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Error saving settings: {ex.Message}";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private void ResetToDefaults()
+    {
+        _mappingConfig = new MappingAnalyzerOptions
+        {
+            DefaultOldEntitiesPath = "./existing-entities",
+            DefaultDacpacEntitiesPath = "./output",
+            DefaultOutputPath = "./entity-mapping.json",
+            ConfidenceThresholdHigh = 0.8,
+            ConfidenceThresholdMedium = 0.6
+        };
+
+        _replacementConfig = new ReplacementSettings
+        {
+            AutoBackup = true,
+            ValidateCompilation = true,
+            DeleteOldEntities = false,
+            BackupRetentionDays = 30,
+            MaxConcurrentReplacements = 5
+        };
+
+        _saveMessage = "Settings reset to defaults. Click 'Save Settings' to persist.";
+    }
+}

@@ -1,0 +1,217 @@
+@using EntityMappingAnalyzer.Models
+
+<div class="card @CssClass">
+    <div class="card-header @HeaderClass">
+        <h5 class="mb-0">
+            <i class="bi bi-bar-chart"></i> @Title
+        </h5>
+    </div>
+    <div class="card-body">
+        @if (Database == null)
+        {
+            <div class="text-center text-muted py-4">
+                <i class="bi bi-inbox" style="font-size: 2rem;"></i>
+                <p class="mt-2 mb-0">No mapping data available</p>
+            </div>
+        }
+        else
+        {
+            <div class="row g-3">
+                <!-- Total Mappings -->
+                <div class="col-md-3">
+                    <div class="d-flex flex-column">
+                        <span class="text-muted small">Total Mappings</span>
+                        <span class="fs-4 fw-bold text-primary">@Database.TotalMappings</span>
+                    </div>
+                </div>
+
+                <!-- Verified -->
+                <div class="col-md-3">
+                    <div class="d-flex flex-column">
+                        <span class="text-muted small">Verified</span>
+                        <span class="fs-4 fw-bold text-success">
+                            @Database.VerifiedMappings
+                            <small class="text-muted fs-6">(@GetPercentage(Database.VerifiedMappings, Database.TotalMappings))</small>
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Unverified -->
+                <div class="col-md-3">
+                    <div class="d-flex flex-column">
+                        <span class="text-muted small">Unverified</span>
+                        <span class="fs-4 fw-bold text-warning">
+                            @Database.UnverifiedMappings
+                            <small class="text-muted fs-6">(@GetPercentage(Database.UnverifiedMappings, Database.TotalMappings))</small>
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Average Confidence -->
+                <div class="col-md-3">
+                    <div class="d-flex flex-column">
+                        <span class="text-muted small">Avg. Confidence</span>
+                        <span class="fs-4 fw-bold @GetConfidenceClass(Database.AverageConfidence)">
+                            @Database.AverageConfidence.ToString("P1")
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            @if (ShowProgressBars)
+            {
+                <div class="mt-4">
+                    <!-- Verification Progress -->
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="small text-muted">Verification Progress</span>
+                            <span class="small fw-bold">@GetPercentage(Database.VerifiedMappings, Database.TotalMappings)</span>
+                        </div>
+                        <div class="progress" style="height: 8px;">
+                            <div class="progress-bar bg-success" 
+                                 role="progressbar" 
+                                 style="width: @GetProgressWidth(Database.VerifiedMappings, Database.TotalMappings)"
+                                 aria-valuenow="@Database.VerifiedMappings" 
+                                 aria-valuemin="0" 
+                                 aria-valuemax="@Database.TotalMappings"></div>
+                        </div>
+                    </div>
+
+                    <!-- Confidence Distribution -->
+                    @if (ShowConfidenceDistribution && Database.Mappings.Any())
+                    {
+                        var highConfidence = Database.Mappings.Count(m => m.ConfidenceScore >= 0.8);
+                        var mediumConfidence = Database.Mappings.Count(m => m.ConfidenceScore >= 0.6 && m.ConfidenceScore < 0.8);
+                        var lowConfidence = Database.Mappings.Count(m => m.ConfidenceScore < 0.6);
+
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <span class="small text-muted">Confidence Distribution</span>
+                            </div>
+                            <div class="progress" style="height: 8px;">
+                                <div class="progress-bar bg-success" 
+                                     role="progressbar" 
+                                     style="width: @GetProgressWidth(highConfidence, Database.TotalMappings)"
+                                     title="High confidence (≥80%): @highConfidence">
+                                </div>
+                                <div class="progress-bar bg-warning" 
+                                     role="progressbar" 
+                                     style="width: @GetProgressWidth(mediumConfidence, Database.TotalMappings)"
+                                     title="Medium confidence (60-79%): @mediumConfidence">
+                                </div>
+                                <div class="progress-bar bg-danger" 
+                                     role="progressbar" 
+                                     style="width: @GetProgressWidth(lowConfidence, Database.TotalMappings)"
+                                     title="Low confidence (<60%): @lowConfidence">
+                                </div>
+                            </div>
+                            <div class="d-flex justify-content-between mt-1">
+                                <span class="small">
+                                    <span class="badge bg-success">High: @highConfidence</span>
+                                </span>
+                                <span class="small">
+                                    <span class="badge bg-warning">Medium: @mediumConfidence</span>
+                                </span>
+                                <span class="small">
+                                    <span class="badge bg-danger">Low: @lowConfidence</span>
+                                </span>
+                            </div>
+                        </div>
+                    }
+
+                    <!-- Replacement Status -->
+                    @if (ShowReplacementStatus && Database.Mappings.Any())
+                    {
+                        var completed = Database.Mappings.Count(m => m.ReplacementStatus == ReplacementStatus.Completed);
+                        var inProgress = Database.Mappings.Count(m => m.ReplacementStatus == ReplacementStatus.InProgress);
+                        var failed = Database.Mappings.Count(m => m.ReplacementStatus == ReplacementStatus.Failed);
+                        var notStarted = Database.Mappings.Count(m => m.ReplacementStatus == ReplacementStatus.NotStarted);
+
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <span class="small text-muted">Replacement Status</span>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span class="small">
+                                    <span class="badge bg-success">Completed: @completed</span>
+                                </span>
+                                <span class="small">
+                                    <span class="badge bg-primary">In Progress: @inProgress</span>
+                                </span>
+                                <span class="small">
+                                    <span class="badge bg-danger">Failed: @failed</span>
+                                </span>
+                                <span class="small">
+                                    <span class="badge bg-secondary">Not Started: @notStarted</span>
+                                </span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (ShowMetadata && Database.CreatedDate != DateTime.MinValue)
+            {
+                <hr />
+                <div class="row text-muted small">
+                    <div class="col-md-6">
+                        <i class="bi bi-calendar-event"></i> 
+                        Created: @Database.CreatedDate.ToString("g")
+                    </div>
+                    <div class="col-md-6 text-end">
+                        <i class="bi bi-clock-history"></i> 
+                        Modified: @Database.LastModifiedDate.ToString("g")
+                    </div>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public MappingDatabase? Database { get; set; }
+
+    [Parameter]
+    public string Title { get; set; } = "Mapping Statistics";
+
+    [Parameter]
+    public string CssClass { get; set; } = "";
+
+    [Parameter]
+    public string HeaderClass { get; set; } = "bg-light";
+
+    [Parameter]
+    public bool ShowProgressBars { get; set; } = true;
+
+    [Parameter]
+    public bool ShowConfidenceDistribution { get; set; } = true;
+
+    [Parameter]
+    public bool ShowReplacementStatus { get; set; } = true;
+
+    [Parameter]
+    public bool ShowMetadata { get; set; } = true;
+
+    private string GetPercentage(int value, int total)
+    {
+        if (total == 0) return "0%";
+        return $"{(value * 100.0 / total):F1}%";
+    }
+
+    private string GetProgressWidth(int value, int total)
+    {
+        if (total == 0) return "0%";
+        return $"{(value * 100.0 / total):F1}%";
+    }
+
+    private string GetConfidenceClass(double confidence)
+    {
+        return confidence switch
+        {
+            >= 0.8 => "text-success",
+            >= 0.6 => "text-warning",
+            _ => "text-danger"
+        };
+    }
+}
