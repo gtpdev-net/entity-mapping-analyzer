@@ -101,8 +101,35 @@ else
                                    @onchange="@(() => ToggleSelection(mapping.Id))" />
                         </td>
                         <td>@mapping.OldEntity?.ClassName</td>
-                        <td>@(mapping.NewEntity?.ClassName ?? "<No Match>")</td>
-                        <td>@mapping.ConfidenceScore.ToString("P0")</td>
+                        <td>
+                            @if (mapping.NewEntity == null)
+                            {
+                                <span class="text-muted" title="@string.Join("; ", mapping.MatchReasons)">&lt;No Match&gt;</span>
+                            }
+                            else
+                            {
+                                @mapping.NewEntity.ClassName
+                            }
+                        </td>
+                        <td>
+                            @if (mapping.NewEntity == null)
+                            {
+                                @if (mapping.ConfidenceScore > 0)
+                                {
+                                    <span class="text-muted" title="Best match found was below threshold">
+                                        (@mapping.ConfidenceScore.ToString("P0"))
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">--</span>
+                                }
+                            }
+                            else
+                            {
+                                @mapping.ConfidenceScore.ToString("P0")
+                            }
+                        </td>
                         <td>
                             @if (mapping.IsVerified)
                             {
