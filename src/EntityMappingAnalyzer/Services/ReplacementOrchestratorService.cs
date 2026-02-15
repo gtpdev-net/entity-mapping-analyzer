@@ -15,6 +15,10 @@ public class ReplacementOrchestratorService
     private readonly CompilationValidator _compilationValidator;
     private readonly MappingStorageService _storageService;
     private readonly ILogger<ReplacementOrchestratorService> _logger;
+    
+    // Cache workspace to avoid reloading for each file
+    private Workspace? _cachedWorkspace;
+    private string? _cachedWorkspacePath;
 
     public ReplacementOrchestratorService(
         RoslynWorkspaceAnalyzer workspaceAnalyzer,
@@ -177,6 +181,16 @@ public class ReplacementOrchestratorService
             progress?.Report($"ERROR: {ex.Message}");
             operation.EndTime = DateTime.UtcNow;
         }
+        finally
+        {
+            // Clean up cached workspace
+            if (_cachedWorkspace != null)
+            {
+                _cachedWorkspace.Dispose();
+                _cachedWorkspace = null;
+                _cachedWorkspacePath = null;
+            }
+        }
 
         return operation;
     }
@@ -330,14 +344,29 @@ public class ReplacementOrchestratorService
     }
 
     /// <summary>
-    /// Load workspace for a specific file (with caching potential)
+    /// Load workspace for a specific file (with caching)
     /// </summary>
     private async Task<Workspace?> LoadWorkspaceForFileAsync(string workspacePath, string filePath)
     {
-        // For now, use a simple approach - load the entire workspace
-        // TODO: Optimize with caching or incremental loading
-        return await _workspaceAnalyzer.FindEntityReferencesAsync(workspacePath, new EntityInfo(), default)
-            .ContinueWith(_ => (Workspace?)null);
+        // Check if we already have the workspace cached
+        if (_cachedWorkspace != null && _cachedWorkspacePath == workspacePath)
+        {
+            return _cachedWorkspace;
+        }
+
+        // Clear the old cache if path changed
+        if (_cachedWorkspace != null && _cachedWorkspacePath != workspacePath)
+        {
+            _cachedWorkspace.Dispose();
+            _cachedWorkspace = null;
+            _cachedWorkspacePath = null;
+        }
+
+        // Load the workspace using the analyzer
+        _cachedWorkspace = await _workspaceAnalyzer.LoadWorkspaceAsync(workspacePath, default);
+        _cachedWorkspacePath = workspacePath;
+
+        return _cachedWorkspace;
     }
 
     /// <summary>

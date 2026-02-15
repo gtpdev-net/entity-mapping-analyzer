@@ -97,7 +97,7 @@ public class RoslynWorkspaceAnalyzer
     /// <summary>
     /// Load a workspace from a path (can be a .sln, .csproj, or directory)
     /// </summary>
-    private async Task<Workspace?> LoadWorkspaceAsync(string path, CancellationToken cancellationToken)
+    public async Task<Workspace?> LoadWorkspaceAsync(string path, CancellationToken cancellationToken)
     {
         // Ensure MSBuild can be located
         if (!Microsoft.Build.Locator.MSBuildLocator.IsRegistered)
