@@ -35,7 +35,12 @@
                 <dl class="row mb-0">
                     <dt class="col-sm-3">Target Codebase:</dt>
                     <dd class="col-sm-9">
-                        <input type="text" class="form-control" @bind="_operation.TargetCodebasePath" />
+                        <div class="input-group">
+                            <input type="text" class="form-control" @bind="_operation.TargetCodebasePath" />
+                            <button type="button" class="btn btn-outline-secondary" @onclick="() => BrowseTargetCodebasePath()">
+                                <i class="bi bi-folder"></i> Browse
+                            </button>
+                        </div>
                     </dd>
 
                     <dt class="col-sm-3">Selected Mappings:</dt>
@@ -287,6 +292,8 @@
     }
 </div>
 
+<FileBrowserModal @ref="_fileBrowser" OnPathSelected="OnPathSelected" />
+
 @code {
     private ReplacementOperation? _operation;
     private List<EntityMapping> _mappings = new();
@@ -294,6 +301,7 @@
     private bool _isComplete = false;
     private string _currentMapping = string.Empty;
     private List<string> _logMessages = new();
+    private FileBrowserModal? _fileBrowser;
 
     [Parameter]
     [SupplyParameterFromQuery(Name = "mappingIds")]
@@ -402,5 +410,19 @@
     private string FormatDuration(TimeSpan duration)
     {
         return duration.ToString(@"mm\:ss");
+    }
+
+    private void BrowseTargetCodebasePath()
+    {
+        _fileBrowser?.Show(_operation?.TargetCodebasePath, FileBrowserModal.BrowseMode.Folder);
+    }
+
+    private void OnPathSelected(string selectedPath)
+    {
+        if (_operation != null)
+        {
+            _operation.TargetCodebasePath = selectedPath;
+            StateHasChanged();
+        }
     }
 }

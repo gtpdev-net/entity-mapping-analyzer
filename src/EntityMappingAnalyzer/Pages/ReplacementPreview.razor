@@ -85,8 +85,13 @@
             <div class="card-body">
                 <div class="mb-3">
                     <label class="form-label">Target Codebase Path *</label>
-                    <input type="text" class="form-control" @bind="_targetPath" 
-                           placeholder="Enter path to solution or project file" />
+                    <div class="input-group">
+                        <input type="text" class="form-control" @bind="_targetPath" 
+                               placeholder="Enter path to solution or project file" />
+                        <button type="button" class="btn btn-outline-secondary" @onclick="() => BrowseTargetPath()">
+                            <i class="bi bi-folder"></i> Browse
+                        </button>
+                    </div>
                     <small class="form-text text-muted">
                         Path to the .sln or .csproj file where replacements will be executed
                     </small>
@@ -320,6 +325,8 @@
     }
 </div>
 
+<FileBrowserModal @ref="_fileBrowser" OnPathSelected="OnPathSelected" />
+
 @code {
     private List<EntityMapping>? _selectedMappings;
     private string? _targetPath;
@@ -334,6 +341,7 @@
     private HashSet<string> _affectedFiles = new();
     private int _totalReferences = 0;
     private int _estimatedMinutes = 0;
+    private FileBrowserModal? _fileBrowser;
 
     protected override async Task OnInitializedAsync()
     {
@@ -476,5 +484,16 @@
             currentDir = Path.GetFullPath(Path.Combine(currentDir, "..", "..", ".."));
 
         return Path.GetFullPath(Path.Combine(currentDir, path));
+    }
+
+    private void BrowseTargetPath()
+    {
+        _fileBrowser?.Show(_targetPath, FileBrowserModal.BrowseMode.Folder);
+    }
+
+    private void OnPathSelected(string selectedPath)
+    {
+        _targetPath = selectedPath;
+        StateHasChanged();
     }
 }

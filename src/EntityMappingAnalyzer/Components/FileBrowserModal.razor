@@ -1,0 +1,323 @@
+@using System.IO
+
+<div class="modal @(_isVisible ? "show d-block" : "")" tabindex="-1" style="background-color: rgba(0,0,0,0.5);">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi @(_browseMode == BrowseMode.Folder ? "bi-folder" : "bi-file-earmark")"></i>
+                    Select @(_browseMode == BrowseMode.Folder ? "Folder" : "File")
+                </h5>
+                <button type="button" class="btn-close" @onclick="Close"></button>
+            </div>
+            <div class="modal-body">
+                @if (!string.IsNullOrEmpty(_errorMessage))
+                {
+                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        @_errorMessage
+                        <button type="button" class="btn-close" @onclick="() => _errorMessage = string.Empty"></button>
+                    </div>
+                }
+
+                <!-- Current Path Display -->
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Current Path:</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" @bind="_currentPath" @bind:event="oninput" />
+                        <button class="btn btn-outline-secondary" type="button" @onclick="NavigateToPath">
+                            <i class="bi bi-arrow-right-circle"></i> Go
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Breadcrumb Navigation -->
+                <nav aria-label="breadcrumb" class="mb-3">
+                    <ol class="breadcrumb">
+                        @foreach (var part in GetBreadcrumbs())
+                        {
+                            <li class="breadcrumb-item">
+                                <a href="#" @onclick="() => NavigateToBreadcrumb(part.Path)" @onclick:preventDefault>
+                                    @part.Name
+                                </a>
+                            </li>
+                        }
+                    </ol>
+                </nav>
+
+                <!-- File/Folder List -->
+                <div class="list-group" style="max-height: 400px; overflow-y: auto;">
+                    @if (_parentPath != null)
+                    {
+                        <button type="button" class="list-group-item list-group-item-action" @onclick="NavigateUp">
+                            <i class="bi bi-arrow-up-circle"></i> ..
+                        </button>
+                    }
+
+                    @foreach (var dir in _directories)
+                    {
+                        <button type="button" 
+                                class="list-group-item list-group-item-action @(dir == _selectedPath ? "active" : "")"
+                                @onclick="() => SelectDirectory(dir)">
+                            <i class="bi bi-folder-fill text-warning"></i> @Path.GetFileName(dir)
+                        </button>
+                    }
+
+                    @if (_browseMode == BrowseMode.File)
+                    {
+                        @foreach (var file in _files)
+                        {
+                            <button type="button" 
+                                    class="list-group-item list-group-item-action @(file == _selectedPath ? "active" : "")"
+                                    @onclick="() => SelectFile(file)">
+                                <i class="bi bi-file-earmark text-primary"></i> @Path.GetFileName(file)
+                            </button>
+                        }
+                    }
+
+                    @if (!_directories.Any() && !_files.Any())
+                    {
+                        <div class="list-group-item text-muted">
+                            <i class="bi bi-inbox"></i> No items found
+                        </div>
+                    }
+                </div>
+
+                @if (_browseMode == BrowseMode.Folder)
+                {
+                    <div class="mt-3">
+                        <label class="form-label fw-bold">Or create a new folder:</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" @bind="_newFolderName" placeholder="New folder name" />
+                            <button class="btn btn-outline-primary" type="button" @onclick="CreateNewFolder" disabled="@string.IsNullOrWhiteSpace(_newFolderName)">
+                                <i class="bi bi-folder-plus"></i> Create
+                            </button>
+                        </div>
+                    </div>
+                }
+            </div>
+            <div class="modal-footer">
+                <div class="me-auto text-muted small">
+                    @if (!string.IsNullOrEmpty(_selectedPath))
+                    {
+                        <span>Selected: @_selectedPath</span>
+                    }
+                </div>
+                <button type="button" class="btn btn-secondary" @onclick="Close">Cancel</button>
+                <button type="button" 
+                        class="btn btn-primary" 
+                        @onclick="ConfirmSelection"
+                        disabled="@string.IsNullOrEmpty(_selectedPath)">
+                    <i class="bi bi-check-circle"></i> Select
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    public enum BrowseMode
+    {
+        File,
+        Folder
+    }
+
+    [Parameter]
+    public string? InitialPath { get; set; }
+
+    [Parameter]
+    public BrowseMode Mode { get; set; } = BrowseMode.Folder;
+
+    [Parameter]
+    public EventCallback<string> OnPathSelected { get; set; }
+
+    private bool _isVisible = false;
+    private BrowseMode _browseMode = BrowseMode.Folder;
+    private string _currentPath = string.Empty;
+    private string? _selectedPath;
+    private string? _parentPath;
+    private List<string> _directories = new();
+    private List<string> _files = new();
+    private string _errorMessage = string.Empty;
+    private string _newFolderName = string.Empty;
+
+    public void Show(string? initialPath = null, BrowseMode? mode = null)
+    {
+        _browseMode = mode ?? Mode;
+        _errorMessage = string.Empty;
+        _newFolderName = string.Empty;
+        _selectedPath = null;
+
+        // Set initial path
+        if (!string.IsNullOrEmpty(initialPath) && (Directory.Exists(initialPath) || File.Exists(initialPath)))
+        {
+            _currentPath = Path.GetDirectoryName(initialPath) ?? initialPath;
+            if (_browseMode == BrowseMode.File && File.Exists(initialPath))
+            {
+                _selectedPath = initialPath;
+            }
+            else if (_browseMode == BrowseMode.Folder && Directory.Exists(initialPath))
+            {
+                _selectedPath = initialPath;
+            }
+        }
+        else
+        {
+            _currentPath = Directory.GetCurrentDirectory();
+        }
+
+        LoadDirectory(_currentPath);
+        _isVisible = true;
+        StateHasChanged();
+    }
+
+    private void Close()
+    {
+        _isVisible = false;
+        StateHasChanged();
+    }
+
+    private void LoadDirectory(string path)
+    {
+        try
+        {
+            if (!Directory.Exists(path))
+            {
+                _errorMessage = $"Directory not found: {path}";
+                return;
+            }
+
+            _currentPath = Path.GetFullPath(path);
+            _directories.Clear();
+            _files.Clear();
+            _errorMessage = string.Empty;
+
+            // Get parent directory
+            var parent = Directory.GetParent(_currentPath);
+            _parentPath = parent?.FullName;
+
+            // Get directories
+            try
+            {
+                _directories = Directory.GetDirectories(_currentPath)
+                    .OrderBy(d => Path.GetFileName(d))
+                    .ToList();
+            }
+            catch (UnauthorizedAccessException)
+            {
+                _errorMessage = "Access denied to some directories";
+            }
+
+            // Get files if in file mode
+            if (_browseMode == BrowseMode.File)
+            {
+                try
+                {
+                    _files = Directory.GetFiles(_currentPath)
+                        .OrderBy(f => Path.GetFileName(f))
+                        .ToList();
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    _errorMessage = "Access denied to some files";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Error loading directory: {ex.Message}";
+        }
+    }
+
+    private void NavigateToPath()
+    {
+        if (!string.IsNullOrEmpty(_currentPath))
+        {
+            LoadDirectory(_currentPath);
+        }
+    }
+
+    private void NavigateUp()
+    {
+        if (_parentPath != null)
+        {
+            LoadDirectory(_parentPath);
+            _selectedPath = null;
+        }
+    }
+
+    private void SelectDirectory(string path)
+    {
+        if (_browseMode == BrowseMode.Folder)
+        {
+            // In folder mode, clicking selects the folder
+            _selectedPath = path;
+        }
+        else
+        {
+            // In file mode, clicking navigates into the folder
+            LoadDirectory(path);
+            _selectedPath = null;
+        }
+    }
+
+    private void SelectFile(string path)
+    {
+        _selectedPath = path;
+    }
+
+    private async Task ConfirmSelection()
+    {
+        if (!string.IsNullOrEmpty(_selectedPath))
+        {
+            await OnPathSelected.InvokeAsync(_selectedPath);
+            Close();
+        }
+    }
+
+    private void NavigateToBreadcrumb(string path)
+    {
+        LoadDirectory(path);
+        _selectedPath = null;
+    }
+
+    private List<(string Name, string Path)> GetBreadcrumbs()
+    {
+        var breadcrumbs = new List<(string, string)>();
+        var path = _currentPath;
+
+        while (!string.IsNullOrEmpty(path))
+        {
+            var name = Path.GetFileName(path);
+            if (string.IsNullOrEmpty(name))
+            {
+                name = path; // Root drive like C:\
+            }
+            breadcrumbs.Insert(0, (name, path));
+
+            var parent = Directory.GetParent(path);
+            path = parent?.FullName ?? string.Empty;
+        }
+
+        return breadcrumbs;
+    }
+
+    private void CreateNewFolder()
+    {
+        if (string.IsNullOrWhiteSpace(_newFolderName))
+            return;
+
+        try
+        {
+            var newPath = Path.Combine(_currentPath, _newFolderName.Trim());
+            Directory.CreateDirectory(newPath);
+            _selectedPath = newPath;
+            LoadDirectory(_currentPath);
+            _newFolderName = string.Empty;
+            _errorMessage = string.Empty;
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Error creating folder: {ex.Message}";
+        }
+    }
+}

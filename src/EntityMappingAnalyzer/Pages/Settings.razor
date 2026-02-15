@@ -28,31 +28,46 @@
                 <div class="card-body">
                     <div class="mb-3">
                         <label for="defaultOldPath" class="form-label fw-bold">Default Old Entities Path</label>
-                        <input type="text" 
-                               id="defaultOldPath" 
-                               class="form-control" 
-                               @bind="_mappingConfig.DefaultOldEntitiesPath" 
-                               placeholder="./existing-entities" />
+                        <div class="input-group">
+                            <input type="text" 
+                                   id="defaultOldPath" 
+                                   class="form-control" 
+                                   @bind="_mappingConfig.DefaultOldEntitiesPath" 
+                                   placeholder="./existing-entities" />
+                            <button type="button" class="btn btn-outline-secondary" @onclick="() => BrowseDefaultOldPath()">
+                                <i class="bi bi-folder"></i> Browse
+                            </button>
+                        </div>
                         <div class="form-text">Default path for scanning existing entity classes</div>
                     </div>
 
                     <div class="mb-3">
                         <label for="defaultDacpacPath" class="form-label fw-bold">Default DACPAC Entities Path</label>
-                        <input type="text" 
-                               id="defaultDacpacPath" 
-                               class="form-control" 
-                               @bind="_mappingConfig.DefaultDacpacEntitiesPath" 
-                               placeholder="./output" />
+                        <div class="input-group">
+                            <input type="text" 
+                                   id="defaultDacpacPath" 
+                                   class="form-control" 
+                                   @bind="_mappingConfig.DefaultDacpacEntitiesPath" 
+                                   placeholder="./output" />
+                            <button type="button" class="btn btn-outline-secondary" @onclick="() => BrowseDefaultDacpacPath()">
+                                <i class="bi bi-folder"></i> Browse
+                            </button>
+                        </div>
                         <div class="form-text">Default path for scanning generated DACPAC entities</div>
                     </div>
 
                     <div class="mb-3">
                         <label for="defaultOutputPath" class="form-label fw-bold">Default Output File Path</label>
-                        <input type="text" 
-                               id="defaultOutputPath" 
-                               class="form-control" 
-                               @bind="_mappingConfig.DefaultOutputPath" 
-                               placeholder="./entity-mapping.json" />
+                        <div class="input-group">
+                            <input type="text" 
+                                   id="defaultOutputPath" 
+                                   class="form-control" 
+                                   @bind="_mappingConfig.DefaultOutputPath" 
+                                   placeholder="./entity-mapping.json" />
+                            <button type="button" class="btn btn-outline-secondary" @onclick="() => BrowseDefaultOutputPath()">
+                                <i class="bi bi-file-earmark"></i> Browse
+                            </button>
+                        </div>
                         <div class="form-text">Default path for saving mapping database JSON</div>
                     </div>
 
@@ -233,6 +248,8 @@
     </div>
 </div>
 
+<FileBrowserModal @ref="_fileBrowser" OnPathSelected="OnPathSelected" />
+
 @code {
     private MappingAnalyzerOptions _mappingConfig = new();
     private ReplacementSettings _replacementConfig = new();
@@ -240,6 +257,8 @@
     private bool _isSaving = false;
     private string? _saveMessage;
     private string? _errorMessage;
+    private FileBrowserModal? _fileBrowser;
+    private string _currentBrowseTarget = string.Empty;
 
     protected override async Task OnInitializedAsync()
     {
@@ -374,6 +393,41 @@
             DeleteOldEntities = false,
             BackupRetentionDays = 30,
             MaxConcurrentReplacements = 5
+
+    private void BrowseDefaultOldPath()
+    {
+        _currentBrowseTarget = "defaultOldPath";
+        _fileBrowser?.Show(_mappingConfig.DefaultOldEntitiesPath, FileBrowserModal.BrowseMode.Folder);
+    }
+
+    private void BrowseDefaultDacpacPath()
+    {
+        _currentBrowseTarget = "defaultDacpacPath";
+        _fileBrowser?.Show(_mappingConfig.DefaultDacpacEntitiesPath, FileBrowserModal.BrowseMode.Folder);
+    }
+
+    private void BrowseDefaultOutputPath()
+    {
+        _currentBrowseTarget = "defaultOutputPath";
+        _fileBrowser?.Show(_mappingConfig.DefaultOutputPath, FileBrowserModal.BrowseMode.File);
+    }
+
+    private void OnPathSelected(string selectedPath)
+    {
+        switch (_currentBrowseTarget)
+        {
+            case "defaultOldPath":
+                _mappingConfig.DefaultOldEntitiesPath = selectedPath;
+                break;
+            case "defaultDacpacPath":
+                _mappingConfig.DefaultDacpacEntitiesPath = selectedPath;
+                break;
+            case "defaultOutputPath":
+                _mappingConfig.DefaultOutputPath = selectedPath;
+                break;
+        }
+        StateHasChanged();
+    }
         };
 
         _saveMessage = "Settings reset to defaults. Click 'Save Settings' to persist.";

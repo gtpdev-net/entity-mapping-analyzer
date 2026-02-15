@@ -21,21 +21,36 @@
                     
                     <div class="mb-3">
                         <label for="oldPath" class="form-label">Old Entities Path</label>
-                        <InputText id="oldPath" class="form-control" @bind-Value="config.OldEntitiesPath" />
+                        <div class="input-group">
+                            <InputText id="oldPath" class="form-control" @bind-Value="config.OldEntitiesPath" />
+                            <button type="button" class="btn btn-outline-secondary" @onclick="() => BrowseOldPath()">
+                                <i class="bi bi-folder"></i> Browse
+                            </button>
+                        </div>
                         <div class="form-text">Path to directory containing existing entity classes</div>
                         <ValidationMessage For="@(() => config.OldEntitiesPath)" />
                     </div>
 
                     <div class="mb-3">
                         <label for="dacpacPath" class="form-label">DACPAC Entities Path</label>
-                        <InputText id="dacpacPath" class="form-control" @bind-Value="config.DacpacEntitiesPath" />
+                        <div class="input-group">
+                            <InputText id="dacpacPath" class="form-control" @bind-Value="config.DacpacEntitiesPath" />
+                            <button type="button" class="btn btn-outline-secondary" @onclick="() => BrowseDacpacPath()">
+                                <i class="bi bi-folder"></i> Browse
+                            </button>
+                        </div>
                         <div class="form-text">Path to directory containing generated DACPAC entities (usually ./output)</div>
                         <ValidationMessage For="@(() => config.DacpacEntitiesPath)" />
                     </div>
 
                     <div class="mb-3">
                         <label for="outputPath" class="form-label">Output File Path</label>
-                        <InputText id="outputPath" class="form-control" @bind-Value="config.OutputPath" />
+                        <div class="input-group">
+                            <InputText id="outputPath" class="form-control" @bind-Value="config.OutputPath" />
+                            <button type="button" class="btn btn-outline-secondary" @onclick="() => BrowseOutputPath()">
+                                <i class="bi bi-file-earmark"></i> Browse
+                            </button>
+                        </div>
                         <div class="form-text">Path where mapping JSON will be saved</div>
                         <ValidationMessage For="@(() => config.OutputPath)" />
                     </div>
@@ -124,12 +139,16 @@
     </div>
 </div>
 
+<FileBrowserModal @ref="_fileBrowser" OnPathSelected="OnPathSelected" />
+
 @code {
     private ScanConfig config = new();
     private MappingDatabase? lastMapping;
     private bool isScanning;
     private string progressMessage = string.Empty;
     private string errorMessage = string.Empty;
+    private FileBrowserModal? _fileBrowser;
+    private string _currentBrowseTarget = string.Empty;
 
     protected override async Task OnInitializedAsync()
     {
@@ -204,7 +223,42 @@
         {
             currentDir = Path.GetFullPath(Path.Combine(currentDir, "..", "..", ".."));
         }
+void BrowseOldPath()
+    {
+        _currentBrowseTarget = "oldPath";
+        _fileBrowser?.Show(config.OldEntitiesPath, FileBrowserModal.BrowseMode.Folder);
+    }
 
+    private void BrowseDacpacPath()
+    {
+        _currentBrowseTarget = "dacpacPath";
+        _fileBrowser?.Show(config.DacpacEntitiesPath, FileBrowserModal.BrowseMode.Folder);
+    }
+
+    private void BrowseOutputPath()
+    {
+        _currentBrowseTarget = "outputPath";
+        _fileBrowser?.Show(config.OutputPath, FileBrowserModal.BrowseMode.File);
+    }
+
+    private void OnPathSelected(string selectedPath)
+    {
+        switch (_currentBrowseTarget)
+        {
+            case "oldPath":
+                config.OldEntitiesPath = selectedPath;
+                break;
+            case "dacpacPath":
+                config.DacpacEntitiesPath = selectedPath;
+                break;
+            case "outputPath":
+                config.OutputPath = selectedPath;
+                break;
+        }
+        StateHasChanged();
+    }
+
+    private 
         return Path.GetFullPath(Path.Combine(currentDir, path));
     }
 
