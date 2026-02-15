@@ -25,12 +25,6 @@ builder.Services.AddScoped<BackupService>();
 builder.Services.AddScoped<EntityCleanupService>();
 builder.Services.AddScoped<CompilationValidator>();
 
-// Configure Kestrel
-builder.WebHost.ConfigureKestrel(options =>
-{
-    options.ListenAnyIP(5000);
-});
-
 var app = builder.Build();
 
 // Configure the HTTP request pipeline
