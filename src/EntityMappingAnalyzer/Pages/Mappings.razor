@@ -49,6 +49,9 @@ else
                 <strong>@selectedMappingIds.Count mapping(s) selected</strong>
             </div>
             <div>
+                <button class="btn btn-success me-2" @onclick="BulkVerify" title="Verify all selected mappings">
+                    <i class="bi bi-check-circle"></i> Verify Selected
+                </button>
                 <button class="btn btn-primary" @onclick="StartReplacement" disabled="@(!selectedMappingIds.Any())">
                     <i class="bi bi-arrow-repeat"></i> Replace Selected
                 </button>
@@ -89,8 +92,12 @@ else
                 </tr>
             </thead>
             <tbody>
+                @{
+                    var index = 0;
+                }
                 @foreach (var mapping in database.Mappings)
                 {
+                    var currentIndex = index++;
                     var rowClass = mapping.IsVerified ? "table-success" : (mapping.ConfidenceScore < 0.7 ? "table-warning" : "");
                     var isSelected = selectedMappingIds.Contains(mapping.Id);
                     <tr class="@rowClass @(isSelected ? "table-active" : "")">
@@ -98,7 +105,8 @@ else
                             <input type="checkbox" 
                                    class="form-check-input" 
                                    checked="@isSelected"
-                                   @onchange="@(() => ToggleSelection(mapping.Id))" />
+                                   @onclick="@(e => HandleCheckboxClick(e, mapping.Id, currentIndex))"
+                                   @onclick:preventDefault />
                         </td>
                         <td>@mapping.OldEntity?.ClassName</td>
                         <td>
@@ -167,6 +175,7 @@ else
     private MappingDatabase? database;
     private string? outputPath;
     private HashSet<string> selectedMappingIds = new();
+    private int? lastSelectedIndex = null;
 
     protected override async Task OnInitializedAsync()
     {
@@ -191,8 +200,42 @@ else
         StateHasChanged();
     }
 
+    private void HandleCheckboxClick(MouseEventArgs e, string mappingId, int currentIndex)
+    {
+        if (database == null) return;
+
+        // Shift-click for range selection
+        if (e.ShiftKey && lastSelectedIndex.HasValue)
+        {
+            // Determine the range
+            var startIndex = Math.Min(lastSelectedIndex.Value, currentIndex);
+            var endIndex = Math.Max(lastSelectedIndex.Value, currentIndex);
+
+            // Select all items in the range
+            var mappingsInRange = database.Mappings
+                .Skip(startIndex)
+                .Take(endIndex - startIndex + 1)
+                .Select(m => m.Id);
+
+            foreach (var id in mappingsInRange)
+            {
+                selectedMappingIds.Add(id);
+            }
+        }
+        else
+        {
+            // Regular click - toggle selection
+            ToggleSelection(mappingId);
+        }
+
+        // Update last selected index
+        lastSelectedIndex = currentIndex;
+        StateHasChanged();
+    }
+
     private void ToggleSelection(string mappingId)
     {
+        lastSelectedIndex = null;
         if (selectedMappingIds.Contains(mappingId))
         {
             selectedMappingIds.Remove(mappingId);
@@ -201,7 +244,6 @@ else
         {
             selectedMappingIds.Add(mappingId);
         }
-        StateHasChanged();
     }
 
     private void ToggleSelectAll()
@@ -216,6 +258,7 @@ else
         {
             selectedMappingIds = database.Mappings.Select(m => m.Id).ToHashSet();
         }
+        lastSelectedIndex = null;
         StateHasChanged();
     }
 
@@ -227,6 +270,7 @@ else
             .Where(m => m.IsVerified)
             .Select(m => m.Id)
             .ToHashSet();
+        lastSelectedIndex = null;
         StateHasChanged();
     }
 
@@ -238,12 +282,31 @@ else
             .Where(m => m.IsReadyForReplacement)
             .Select(m => m.Id)
             .ToHashSet();
+        lastSelectedIndex = null;
         StateHasChanged();
     }
 
     private void ClearSelection()
     {
         selectedMappingIds.Clear();
+        lastSelectedIndex = null;
+        StateHasChanged();
+    }
+
+    private async Task BulkVerify()
+    {
+        if (database == null || outputPath == null) return;
+
+        foreach (var mappingId in selectedMappingIds)
+        {
+            var mapping = database.Mappings.FirstOrDefault(m => m.Id == mappingId);
+            if (mapping != null)
+            {
+                mapping.IsVerified = true;
+            }
+        }
+
+        await StorageService.SaveAsync(database, outputPath);
         StateHasChanged();
     }
 
