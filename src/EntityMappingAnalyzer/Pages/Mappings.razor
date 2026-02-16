@@ -292,8 +292,9 @@ else
             var startIndex = Math.Min(lastSelectedIndex.Value, currentIndex);
             var endIndex = Math.Max(lastSelectedIndex.Value, currentIndex);
 
-            // Select all items in the range
-            var mappingsInRange = database.Mappings
+            // Select all items in the range (using sorted order)
+            var sortedMappings = GetSortedMappings().ToList();
+            var mappingsInRange = sortedMappings
                 .Skip(startIndex)
                 .Take(endIndex - startIndex + 1)
                 .Select(m => m.Id);
