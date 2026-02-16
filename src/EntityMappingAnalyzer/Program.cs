@@ -1,5 +1,33 @@
 using EntityMappingAnalyzer.Services;
 using EntityMappingAnalyzer.Models;
+using Microsoft.Build.Locator;
+
+// Register MSBuild locator once at startup to avoid issues with Roslyn workspace loading
+if (!MSBuildLocator.IsRegistered)
+{
+    try
+    {
+        var instances = MSBuildLocator.QueryVisualStudioInstances().ToList();
+        if (instances.Any())
+        {
+            // Prefer the newest version
+            var instance = instances.OrderByDescending(i => i.Version).First();
+            MSBuildLocator.RegisterInstance(instance);
+            Console.WriteLine($"Registered MSBuild from: {instance.MSBuildPath}");
+        }
+        else
+        {
+            // Fallback to defaults
+            MSBuildLocator.RegisterDefaults();
+            Console.WriteLine("Registered MSBuild using defaults");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Warning: Failed to register MSBuild locator: {ex.Message}");
+        Console.WriteLine("The application will use Buildalyzer for workspace loading.");
+    }
+}
 
 var builder = WebApplication.CreateBuilder(args);
 

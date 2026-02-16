@@ -99,18 +99,6 @@ public class RoslynWorkspaceAnalyzer
     /// </summary>
     public async Task<Workspace?> LoadWorkspaceAsync(string path, CancellationToken cancellationToken)
     {
-        // Ensure MSBuild can be located
-        if (!Microsoft.Build.Locator.MSBuildLocator.IsRegistered)
-        {
-            try
-            {
-                Microsoft.Build.Locator.MSBuildLocator.RegisterDefaults();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to register MSBuild locator");
-            }
-        }
 
         // Try to load as solution or project file
         if (File.Exists(path))
@@ -152,23 +140,49 @@ public class RoslynWorkspaceAnalyzer
     /// </summary>
     private async Task<Workspace?> LoadSolutionAsync(string solutionPath, CancellationToken cancellationToken)
     {
+        // Try Buildalyzer first - it's more robust for complex project setups
+        _logger.LogInformation("Loading solution with Buildalyzer: {Path}", solutionPath);
+        var workspace = await LoadWithBuildalyzerAsync(solutionPath, cancellationToken);
+        
+        if (workspace != null && workspace.CurrentSolution.Projects.Any())
+        {
+            _logger.LogInformation("Successfully loaded {ProjectCount} projects with Buildalyzer", 
+                workspace.CurrentSolution.Projects.Count());
+            return workspace;
+        }
+
+        // Fallback to MSBuildWorkspace if Buildalyzer fails
+        _logger.LogInformation("Buildalyzer failed, trying MSBuildWorkspace: {Path}", solutionPath);
         try
         {
-            var workspace = MSBuildWorkspace.Create();
-            workspace.WorkspaceFailed += (sender, e) =>
+            var msbuildWorkspace = MSBuildWorkspace.Create();
+            var diagnostics = new List<WorkspaceDiagnostic>();
+            
+            msbuildWorkspace.WorkspaceFailed += (sender, e) =>
             {
+                diagnostics.Add(e.Diagnostic);
                 _logger.LogWarning("Workspace loading warning: {Message}", e.Diagnostic.Message);
             };
 
-            await workspace.OpenSolutionAsync(solutionPath, cancellationToken: cancellationToken);
-            return workspace;
+            await msbuildWorkspace.OpenSolutionAsync(solutionPath, cancellationToken: cancellationToken);
+            
+            // Check if there were critical failures
+            var criticalFailures = diagnostics.Where(d => 
+                d.Kind == WorkspaceDiagnosticKind.Failure &&
+                (d.Message.Contains("could not be found") || d.Message.Contains("failed")));
+            
+            if (criticalFailures.Any() && !msbuildWorkspace.CurrentSolution.Projects.Any())
+            {
+                _logger.LogWarning("MSBuildWorkspace had critical failures, using Buildalyzer result");
+                return workspace; // Return Buildalyzer result even if it was null
+            }
+            
+            return msbuildWorkspace;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to load solution: {Path}", solutionPath);
-            
-            // Fallback to Buildalyzer
-            return await LoadWithBuildalyzerAsync(solutionPath, cancellationToken);
+            _logger.LogError(ex, "Failed to load solution with MSBuildWorkspace: {Path}", solutionPath);
+            return workspace; // Return Buildalyzer result even if it was null
         }
     }
 
@@ -177,23 +191,48 @@ public class RoslynWorkspaceAnalyzer
     /// </summary>
     private async Task<Workspace?> LoadProjectAsync(string projectPath, CancellationToken cancellationToken)
     {
+        // Try Buildalyzer first - it's more robust for complex project setups
+        _logger.LogInformation("Loading project with Buildalyzer: {Path}", projectPath);
+        var workspace = await LoadWithBuildalyzerAsync(projectPath, cancellationToken);
+        
+        if (workspace != null && workspace.CurrentSolution.Projects.Any())
+        {
+            _logger.LogInformation("Successfully loaded project with Buildalyzer");
+            return workspace;
+        }
+
+        // Fallback to MSBuildWorkspace if Buildalyzer fails
+        _logger.LogInformation("Buildalyzer failed, trying MSBuildWorkspace: {Path}", projectPath);
         try
         {
-            var workspace = MSBuildWorkspace.Create();
-            workspace.WorkspaceFailed += (sender, e) =>
+            var msbuildWorkspace = MSBuildWorkspace.Create();
+            var diagnostics = new List<WorkspaceDiagnostic>();
+            
+            msbuildWorkspace.WorkspaceFailed += (sender, e) =>
             {
+                diagnostics.Add(e.Diagnostic);
                 _logger.LogWarning("Workspace loading warning: {Message}", e.Diagnostic.Message);
             };
 
-            await workspace.OpenProjectAsync(projectPath, cancellationToken: cancellationToken);
-            return workspace;
+            await msbuildWorkspace.OpenProjectAsync(projectPath, cancellationToken: cancellationToken);
+            
+            // Check if there were critical failures
+            var criticalFailures = diagnostics.Where(d => 
+                d.Kind == WorkspaceDiagnosticKind.Failure &&
+                (d.Message.Contains("could not be found") || d.Message.Contains("failed")));
+            
+            if (criticalFailures.Any() && !msbuildWorkspace.CurrentSolution.Projects.Any())
+            {
+                _logger.LogWarning("MSBuildWorkspace had critical failures, using Buildalyzer result");
+                return workspace; // Return Buildalyzer result even if it was null
+            }
+            
+            return msbuildWorkspace;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to load project: {Path}", projectPath);
-            
-            // Fallback to Buildalyzer
-            return await LoadWithBuildalyzerAsync(projectPath, cancellationToken);
+            _logger.LogError(ex, "Failed to load project with MSBuildWorkspace: {Path}", projectPath);
+            return workspace; // Return Buildalyzer result even if it was null
         }
     }
 

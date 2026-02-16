@@ -4,20 +4,29 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12.0</LangVersion>
+    
+    <!-- MSBuild configuration for .NET 8.0 -->
+    <MSBuildEnableWorkloadResolver>true</MSBuildEnableWorkloadResolver>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Roslyn for C# code analysis -->
-    <PackageReference Include="Microsoft.CodeAnalysis.Common" Version="4.8.0" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
-    <PackageReference Include="Microsoft.CodeAnalysis.VisualBasic" Version="4.8.0" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.8.0" />
-    <PackageReference Include="Microsoft.CodeAnalysis.VisualBasic.Workspaces" Version="4.8.0" />
-    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.Common" Version="4.8.0" />
-    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="4.8.0" />
-    <PackageReference Include="Microsoft.Build.Locator" Version="1.6.10" />
-    <PackageReference Include="Buildalyzer" Version="6.0.2" />
-    <PackageReference Include="Buildalyzer.Workspaces" Version="6.0.2" />
+    <!-- Roslyn for C# code analysis - Updated for .NET 8.0 compatibility -->
+    <PackageReference Include="Microsoft.CodeAnalysis.Common" Version="4.11.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.VisualBasic" Version="4.11.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.11.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.VisualBasic.Workspaces" Version="4.11.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.Common" Version="4.11.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="4.11.0" />
+    
+    <!-- MSBuild integration - Updated for better .NET 8.0 and VS 2022 support -->
+    <PackageReference Include="Microsoft.Build.Locator" Version="1.7.8" />
+    
+    <!-- Project analysis - Updated for .NET 8.0 SDK compatibility -->
+    <PackageReference Include="Buildalyzer" Version="8.0.0" />
+    <PackageReference Include="Buildalyzer.Workspaces" Version="8.0.0" />
     
     <!-- Fuzzy string matching -->
     <PackageReference Include="FuzzySharp" Version="2.0.2" />
