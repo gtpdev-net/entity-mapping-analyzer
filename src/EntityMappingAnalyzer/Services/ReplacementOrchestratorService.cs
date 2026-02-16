@@ -255,6 +255,9 @@ public class ReplacementOrchestratorService
                 progress?.Report($"  [DRY RUN] Would modify {references.Select(r => r.FilePath).Distinct().Count()} files");
             }
 
+            // Mark replacement as completed before cleanup
+            result.Status = ReplacementStatus.Completed;
+
             // Step 3: Delete old entity file if requested
             if (deleteOldEntities && !isDryRun && !string.IsNullOrEmpty(mapping.OldEntity!.FilePath))
             {
@@ -267,8 +270,6 @@ public class ReplacementOrchestratorService
                     progress?.Report($"  Deleted: {mapping.OldEntity!.FilePath}");
                 }
             }
-
-            result.Status = ReplacementStatus.Completed;
         }
         catch (Exception ex)
         {
