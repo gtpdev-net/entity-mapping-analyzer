@@ -91,9 +91,52 @@ if (!MSBuildLocator.IsRegistered)
         }
         else
         {
-            // Fallback to defaults
-            MSBuildLocator.RegisterDefaults();
-            Console.WriteLine("Registered MSBuild using defaults");
+            // No Visual Studio found, try to find .NET SDK's MSBuild
+            Console.WriteLine("No Visual Studio instances found, looking for .NET SDK MSBuild...");
+            
+            // Try common .NET SDK locations
+            var dotnetRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT") 
+                ?? (OperatingSystem.IsWindows() 
+                    ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet")
+                    : "/usr/share/dotnet");
+            
+            if (Directory.Exists(dotnetRoot))
+            {
+                var sdkPath = Path.Combine(dotnetRoot, "sdk");
+                if (Directory.Exists(sdkPath))
+                {
+                    // Find the latest SDK version
+                    var sdkVersions = Directory.GetDirectories(sdkPath)
+                        .Select(d => new DirectoryInfo(d))
+                        .OrderByDescending(d => d.Name)
+                        .FirstOrDefault();
+                    
+                    if (sdkVersions != null)
+                    {
+                        var msbuildPath = sdkVersions.FullName;
+                        Console.WriteLine($"Found .NET SDK at: {msbuildPath}");
+                        MSBuildLocator.RegisterMSBuildPath(msbuildPath);
+                        Console.WriteLine($"Registered MSBuild from .NET SDK: {msbuildPath}");
+                    }
+                    else
+                    {
+                        // Fallback to defaults as last resort
+                        MSBuildLocator.RegisterDefaults();
+                        Console.WriteLine("Registered MSBuild using defaults");
+                    }
+                }
+                else
+                {
+                    MSBuildLocator.RegisterDefaults();
+                    Console.WriteLine("Registered MSBuild using defaults");
+                }
+            }
+            else
+            {
+                // Fallback to defaults
+                MSBuildLocator.RegisterDefaults();
+                Console.WriteLine("Registered MSBuild using defaults");
+            }
         }
     }
     catch (Exception ex)
@@ -104,6 +147,19 @@ if (!MSBuildLocator.IsRegistered)
 }
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Ensure correct paths are set regardless of current working directory
+// This is important because workspace operations may change the working directory
+var appDirectory = AppContext.BaseDirectory;
+builder.Environment.ContentRootPath = appDirectory;
+builder.Environment.WebRootPath = Path.Combine(appDirectory, "wwwroot");
+
+// Ensure wwwroot exists
+if (!Directory.Exists(builder.Environment.WebRootPath))
+{
+    Directory.CreateDirectory(builder.Environment.WebRootPath);
+    Console.WriteLine($"Created wwwroot directory at: {builder.Environment.WebRootPath}");
+}
 
 // Configure options
 builder.Services.Configure<MappingAnalyzerOptions>(
