@@ -243,8 +243,35 @@ public class RoslynWorkspaceAnalyzer
     {
         try
         {
+            // Ensure MEF host services are initialized with language service assemblies
+            // This must be done before creating any workspace
+            var hostServices = Microsoft.CodeAnalysis.Host.Mef.MefHostServices.Create(
+                Microsoft.CodeAnalysis.Host.Mef.MefHostServices.DefaultAssemblies);
+            
             var manager = new AnalyzerManager(path);
-            var workspace = manager.GetWorkspace();
+            
+            // Create workspace with properly initialized host services
+            var workspace = new AdhocWorkspace(hostServices);
+            
+            // Add all analyzed projects to the workspace
+            foreach (var project in manager.Projects.Values)
+            {
+                try
+                {
+                    var analyzerResults = project.Build();
+                    foreach (var result in analyzerResults)
+                    {
+                        if (result != null)
+                        {
+                            result.AddToWorkspace(workspace);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to add project {ProjectPath} to workspace", project.ProjectFile.Path);
+                }
+            }
             
             await Task.CompletedTask; // Keep async signature consistent
             return workspace;

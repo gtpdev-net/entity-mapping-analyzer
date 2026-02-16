@@ -49,13 +49,31 @@ try
     foreach (var assemblyName in compositionAssemblies)
     {
         var assembly = Assembly.Load($"{assemblyName}, Version=8.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a");
-        Console.WriteLine($"Pre-loaded: {assembly.FullName}");
+        Console.WriteLine($"Pre-loaded: {assembly.GetName().Name}");
     }
-    Console.WriteLine("Successfully pre-loaded all System.Composition assemblies for Roslyn");
+    
+    // Pre-load Roslyn language service assemblies for MEF composition
+    var roslynAssemblies = new[]
+    {
+        "Microsoft.CodeAnalysis",
+        "Microsoft.CodeAnalysis.CSharp",
+        "Microsoft.CodeAnalysis.VisualBasic",
+        "Microsoft.CodeAnalysis.Workspaces",
+        "Microsoft.CodeAnalysis.CSharp.Workspaces",
+        "Microsoft.CodeAnalysis.VisualBasic.Workspaces"
+    };
+    
+    foreach (var assemblyName in roslynAssemblies)
+    {
+        var assembly = Assembly.Load(assemblyName);
+        Console.WriteLine($"Pre-loaded: {assembly.GetName().Name}");
+    }
+    
+    Console.WriteLine("Successfully pre-loaded all required assemblies for Roslyn workspaces");
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"Warning: Failed to pre-load System.Composition assemblies: {ex.Message}");
+    Console.WriteLine($"Warning: Failed to pre-load required assemblies: {ex.Message}");
 }
 
 // Register MSBuild locator once at startup to avoid issues with Roslyn workspace loading
