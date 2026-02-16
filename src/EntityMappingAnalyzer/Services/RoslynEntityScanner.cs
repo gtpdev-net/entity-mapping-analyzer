@@ -77,39 +77,19 @@ public class RoslynEntityScanner
     }
 
     /// <summary>
-    /// Heuristic to determine if a class is likely an entity
+    /// Determines if a class should be treated as an entity.
+    /// Since users explicitly select entity folders, we include all non-static classes.
     /// </summary>
     private bool IsLikelyEntityClass(ClassDeclarationSyntax classDecl)
     {
-        // Check if class is public
-        if (!classDecl.Modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword)))
+        // Only exclude static classes (which cannot be instantiated as entities)
+        if (classDecl.Modifiers.Any(m => m.IsKind(SyntaxKind.StaticKeyword)))
         {
             return false;
         }
 
-        // Must have at least one public property
-        var hasPublicProperties = classDecl.Members
-            .OfType<PropertyDeclarationSyntax>()
-            .Any(p => p.Modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword)));
-
-        if (!hasPublicProperties)
-        {
-            return false;
-        }
-
-        // Check for common entity indicators
-        var attributes = classDecl.AttributeLists.SelectMany(al => al.Attributes).ToList();
-        var hasTableAttribute = attributes.Any(a => a.Name.ToString().Contains("Table"));
-        
-        // If has [Table] attribute, definitely an entity
-        if (hasTableAttribute)
-        {
-            return true;
-        }
-
-        // Check if it looks like a POCO entity (has properties with common entity patterns)
-        var propertyCount = classDecl.Members.OfType<PropertyDeclarationSyntax>().Count();
-        return propertyCount >= 2; // At least 2 properties to be considered an entity
+        // Include all other classes - user has explicitly selected an entity folder
+        return true;
     }
 
     /// <summary>
