@@ -12,9 +12,15 @@ namespace EntityMappingAnalyzer.Services;
 /// <summary>
 /// Analyzes a Roslyn workspace to find all references to entities that need replacement
 /// </summary>
-public class RoslynWorkspaceAnalyzer
+public class RoslynWorkspaceAnalyzer : IDisposable
 {
     private readonly ILogger<RoslynWorkspaceAnalyzer> _logger;
+    
+    // Cache workspace to avoid reloading the same solution multiple times
+    private Workspace? _cachedWorkspace;
+    private string? _cachedWorkspacePath;
+    private readonly object _cacheLock = new object();
+    private bool _disposed = false;
 
     public RoslynWorkspaceAnalyzer(ILogger<RoslynWorkspaceAnalyzer> logger)
     {
@@ -30,9 +36,13 @@ public class RoslynWorkspaceAnalyzer
         CancellationToken cancellationToken = default)
     {
         var locations = new List<CodeLocation>();
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         try
         {
+            _logger.LogInformation("Starting entity reference search for {ClassName} in workspace: {Path}", 
+                entity.ClassName, workspacePath);
+            
             // Load the workspace
             var workspace = await LoadWorkspaceAsync(workspacePath, cancellationToken);
             if (workspace == null)
@@ -41,6 +51,9 @@ public class RoslynWorkspaceAnalyzer
                 return locations;
             }
 
+            _logger.LogDebug("Workspace loaded with {ProjectCount} projects, searching for symbol {ClassName}",
+                workspace.CurrentSolution.Projects.Count(), entity.ClassName);
+
             // Find the symbol for the entity
             var symbol = await FindEntitySymbolAsync(workspace, entity, cancellationToken);
             if (symbol == null)
@@ -48,6 +61,8 @@ public class RoslynWorkspaceAnalyzer
                 _logger.LogWarning("Could not find symbol for entity: {ClassName}", entity.ClassName);
                 return locations;
             }
+
+            _logger.LogDebug("Symbol found: {SymbolName}, searching for references...", symbol.ToDisplayString());
 
             // Find all references to the symbol
             var references = await SymbolFinder.FindReferencesAsync(symbol, workspace.CurrentSolution, cancellationToken);
@@ -72,11 +87,14 @@ public class RoslynWorkspaceAnalyzer
                 }
             }
 
-            _logger.LogInformation("Found {Count} references to entity {ClassName}", locations.Count, entity.ClassName);
+            stopwatch.Stop();
+            _logger.LogInformation("Found {Count} references to entity {ClassName} in {ElapsedMs}ms", 
+                locations.Count, entity.ClassName, stopwatch.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error finding entity references for {ClassName}", entity.ClassName);
+            _logger.LogError(ex, "Error finding entity references for {ClassName} after {ElapsedMs}ms", 
+                entity.ClassName, stopwatch.ElapsedMilliseconds);
         }
 
         return locations;
@@ -99,40 +117,73 @@ public class RoslynWorkspaceAnalyzer
     /// </summary>
     public async Task<Workspace?> LoadWorkspaceAsync(string path, CancellationToken cancellationToken)
     {
+        // Normalize the path for consistent caching
+        var normalizedPath = Path.GetFullPath(path);
+        
+        // Check cache first
+        lock (_cacheLock)
+        {
+            if (_cachedWorkspace != null && _cachedWorkspacePath == normalizedPath)
+            {
+                _logger.LogInformation("Using cached workspace for: {Path}", normalizedPath);
+                return _cachedWorkspace;
+            }
+        }
 
         // Try to load as solution or project file
-        if (File.Exists(path))
+        Workspace? workspace = null;
+        
+        if (File.Exists(normalizedPath))
         {
-            if (path.EndsWith(".sln", StringComparison.OrdinalIgnoreCase))
+            if (normalizedPath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase))
             {
-                return await LoadSolutionAsync(path, cancellationToken);
+                workspace = await LoadSolutionAsync(normalizedPath, cancellationToken);
             }
-            else if (path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+            else if (normalizedPath.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
             {
-                return await LoadProjectAsync(path, cancellationToken);
+                workspace = await LoadProjectAsync(normalizedPath, cancellationToken);
             }
         }
-
-        // Try to find solution or project files in directory
-        if (Directory.Exists(path))
+        else if (Directory.Exists(normalizedPath))
         {
-            var slnFiles = Directory.GetFiles(path, "*.sln", SearchOption.TopDirectoryOnly);
+            // Try to find solution or project files in directory
+            var slnFiles = Directory.GetFiles(normalizedPath, "*.sln", SearchOption.TopDirectoryOnly);
             if (slnFiles.Length > 0)
             {
-                return await LoadSolutionAsync(slnFiles[0], cancellationToken);
+                workspace = await LoadSolutionAsync(slnFiles[0], cancellationToken);
             }
-
-            var projFiles = Directory.GetFiles(path, "*.csproj", SearchOption.TopDirectoryOnly);
-            if (projFiles.Length > 0)
+            else
             {
-                return await LoadProjectAsync(projFiles[0], cancellationToken);
+                var projFiles = Directory.GetFiles(normalizedPath, "*.csproj", SearchOption.TopDirectoryOnly);
+                if (projFiles.Length > 0)
+                {
+                    workspace = await LoadProjectAsync(projFiles[0], cancellationToken);
+                }
+                else
+                {
+                    // Fallback: create adhoc workspace from C# files
+                    workspace = await LoadDirectoryAsAdhocWorkspaceAsync(normalizedPath, cancellationToken);
+                }
             }
-
-            // Fallback: create adhoc workspace from C# files
-            return await LoadDirectoryAsAdhocWorkspaceAsync(path, cancellationToken);
         }
 
-        return null;
+        // Cache the workspace if successfully loaded
+        if (workspace != null)
+        {
+            lock (_cacheLock)
+            {
+                // Dispose old cached workspace if path changed
+                if (_cachedWorkspace != null && _cachedWorkspacePath != normalizedPath)
+                {
+                    _cachedWorkspace.Dispose();
+                }
+                
+                _cachedWorkspace = workspace;
+                _cachedWorkspacePath = normalizedPath;
+            }
+        }
+
+        return workspace;
     }
 
     /// <summary>
@@ -248,30 +299,72 @@ public class RoslynWorkspaceAnalyzer
             var hostServices = Microsoft.CodeAnalysis.Host.Mef.MefHostServices.Create(
                 Microsoft.CodeAnalysis.Host.Mef.MefHostServices.DefaultAssemblies);
             
+            _logger.LogDebug("Initializing Buildalyzer for path: {Path}", path);
             var manager = new AnalyzerManager(path);
+            
+            var totalProjects = manager.Projects.Count;
+            _logger.LogDebug("Found {TotalProjects} projects to analyze", totalProjects);
             
             // Create workspace with properly initialized host services
             var workspace = new AdhocWorkspace(hostServices);
             
+            // Track added projects to avoid duplicates
+            var addedProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var projectCount = 0;
+            var buildStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            
             // Add all analyzed projects to the workspace
+            var processedCount = 0;
             foreach (var project in manager.Projects.Values)
             {
+                var projectPath = project.ProjectFile.Path;
+                var projectName = Path.GetFileNameWithoutExtension(projectPath);
+                
                 try
                 {
-                    var analyzerResults = project.Build();
-                    foreach (var result in analyzerResults)
+                    processedCount++;
+                    
+                    _logger.LogDebug("[{Current}/{Total}] Processing project: {ProjectName}", 
+                        processedCount, totalProjects, projectName);
+                    
+                    // Skip if already processed this project
+                    if (addedProjects.Contains(projectPath))
                     {
-                        if (result != null)
+                        _logger.LogDebug("Project {ProjectName} already processed, skipping", projectName);
+                        continue;
+                    }
+                    
+                    var analyzerResults = project.Build();
+                    
+                    // Take only the first result for each project to avoid duplicates
+                    // (multiple results can occur when a project has multiple target frameworks)
+                    var result = analyzerResults.FirstOrDefault();
+                    if (result != null)
+                    {
+                        try
                         {
                             result.AddToWorkspace(workspace);
+                            addedProjects.Add(projectPath);
+                            projectCount++;
+                            _logger.LogDebug("Successfully added project {ProjectName} to workspace ({ProjectCount}/{Total})", 
+                                projectName, projectCount, totalProjects);
+                        }
+                        catch (InvalidOperationException ex) when (ex.Message.Contains("already contains the specified project"))
+                        {
+                            // Project already in workspace, this can happen with project references
+                            _logger.LogDebug("Project {ProjectName} already in workspace, skipping", projectName);
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to add project {ProjectPath} to workspace", project.ProjectFile.Path);
+                    _logger.LogWarning(ex, "Failed to add project {ProjectName} to workspace", projectName);
                 }
             }
+            
+            buildStopwatch.Stop();
+            _logger.LogInformation("Successfully loaded {ProjectCount} projects with Buildalyzer in {ElapsedSeconds:F1}s", 
+                projectCount, buildStopwatch.Elapsed.TotalSeconds);
             
             await Task.CompletedTask; // Keep async signature consistent
             return workspace;
@@ -442,5 +535,35 @@ public class RoslynWorkspaceAnalyzer
         }
 
         return LocationType.Other;
+    }
+    
+    /// <summary>
+    /// Clears the cached workspace to force a reload on next access
+    /// </summary>
+    public void ClearCache()
+    {
+        lock (_cacheLock)
+        {
+            if (_cachedWorkspace != null)
+            {
+                _cachedWorkspace.Dispose();
+                _cachedWorkspace = null;
+                _cachedWorkspacePath = null;
+                _logger.LogInformation("Workspace cache cleared");
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Dispose the analyzer and any cached workspace
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+            
+        ClearCache();
+        _disposed = true;
+        GC.SuppressFinalize(this);
     }
 }
