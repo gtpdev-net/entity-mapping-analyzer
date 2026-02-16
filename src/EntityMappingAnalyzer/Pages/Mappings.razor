@@ -73,9 +73,9 @@ else
         </div>
     }
 
-    <div class="table-responsive">
-        <table class="table table-striped table-hover">
-            <thead>
+    <div class="table-container" style="max-height: 600px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 4px;">
+        <table class="table table-striped table-hover mb-0">
+            <thead style="position: sticky; top: 0; background-color: white; z-index: 10; box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);">
                 <tr>
                     <th style="width: 40px;">
                         <input type="checkbox" 
@@ -83,11 +83,41 @@ else
                                @onchange="ToggleSelectAll"
                                checked="@(selectedMappingIds.Count == database.Mappings.Count)" />
                     </th>
-                    <th>Old Entity</th>
-                    <th>New Entity</th>
-                    <th>Confidence</th>
-                    <th>Status</th>
-                    <th>Replacement</th>
+                    <th style="cursor: pointer; user-select: none;" @onclick="() => SortBy(nameof(EntityMapping.OldEntity))">
+                        Old Entity 
+                        @if (sortColumn == nameof(EntityMapping.OldEntity))
+                        {
+                            <i class="bi bi-@(sortAscending ? "arrow-up" : "arrow-down")"></i>
+                        }
+                    </th>
+                    <th style="cursor: pointer; user-select: none;" @onclick="() => SortBy(nameof(EntityMapping.NewEntity))">
+                        New Entity 
+                        @if (sortColumn == nameof(EntityMapping.NewEntity))
+                        {
+                            <i class="bi bi-@(sortAscending ? "arrow-up" : "arrow-down")"></i>
+                        }
+                    </th>
+                    <th style="cursor: pointer; user-select: none;" @onclick="() => SortBy(nameof(EntityMapping.ConfidenceScore))">
+                        Confidence 
+                        @if (sortColumn == nameof(EntityMapping.ConfidenceScore))
+                        {
+                            <i class="bi bi-@(sortAscending ? "arrow-up" : "arrow-down")"></i>
+                        }
+                    </th>
+                    <th style="cursor: pointer; user-select: none;" @onclick="() => SortBy(nameof(EntityMapping.IsVerified))">
+                        Status 
+                        @if (sortColumn == nameof(EntityMapping.IsVerified))
+                        {
+                            <i class="bi bi-@(sortAscending ? "arrow-up" : "arrow-down")"></i>
+                        }
+                    </th>
+                    <th style="cursor: pointer; user-select: none;" @onclick="() => SortBy(nameof(EntityMapping.ReplacementStatus))">
+                        Replacement 
+                        @if (sortColumn == nameof(EntityMapping.ReplacementStatus))
+                        {
+                            <i class="bi bi-@(sortAscending ? "arrow-up" : "arrow-down")"></i>
+                        }
+                    </th>
                     <th>Actions</th>
                 </tr>
             </thead>
@@ -95,7 +125,7 @@ else
                 @{
                     var index = 0;
                 }
-                @foreach (var mapping in database.Mappings)
+                @foreach (var mapping in GetSortedMappings())
                 {
                     var currentIndex = index++;
                     var rowClass = mapping.IsVerified ? "table-success" : (mapping.ConfidenceScore < 0.7 ? "table-warning" : "");
@@ -176,6 +206,8 @@ else
     private string? outputPath;
     private HashSet<string> selectedMappingIds = new();
     private int? lastSelectedIndex = null;
+    private string sortColumn = nameof(EntityMapping.OldEntity);
+    private bool sortAscending = true;
 
     protected override async Task OnInitializedAsync()
     {
@@ -186,6 +218,55 @@ else
         {
             database = await StorageService.LoadAsync(outputPath);
         }
+    }
+
+    private void SortBy(string column)
+    {
+        if (sortColumn == column)
+        {
+            sortAscending = !sortAscending;
+        }
+        else
+        {
+            sortColumn = column;
+            sortAscending = true;
+        }
+        StateHasChanged();
+    }
+
+    private IEnumerable<EntityMapping> GetSortedMappings()
+    {
+        if (database == null || !database.Mappings.Any())
+        {
+            return Enumerable.Empty<EntityMapping>();
+        }
+
+        IEnumerable<EntityMapping> sorted = sortColumn switch
+        {
+            nameof(EntityMapping.OldEntity) => sortAscending
+                ? database.Mappings.OrderBy(m => m.OldEntity?.ClassName ?? string.Empty)
+                : database.Mappings.OrderByDescending(m => m.OldEntity?.ClassName ?? string.Empty),
+            
+            nameof(EntityMapping.NewEntity) => sortAscending
+                ? database.Mappings.OrderBy(m => m.NewEntity?.ClassName ?? string.Empty)
+                : database.Mappings.OrderByDescending(m => m.NewEntity?.ClassName ?? string.Empty),
+            
+            nameof(EntityMapping.ConfidenceScore) => sortAscending
+                ? database.Mappings.OrderBy(m => m.ConfidenceScore)
+                : database.Mappings.OrderByDescending(m => m.ConfidenceScore),
+            
+            nameof(EntityMapping.IsVerified) => sortAscending
+                ? database.Mappings.OrderBy(m => m.IsVerified)
+                : database.Mappings.OrderByDescending(m => m.IsVerified),
+            
+            nameof(EntityMapping.ReplacementStatus) => sortAscending
+                ? database.Mappings.OrderBy(m => m.ReplacementStatus)
+                : database.Mappings.OrderByDescending(m => m.ReplacementStatus),
+            
+            _ => database.Mappings
+        };
+
+        return sorted;
     }
 
     private async Task ToggleVerified(EntityMapping mapping)
