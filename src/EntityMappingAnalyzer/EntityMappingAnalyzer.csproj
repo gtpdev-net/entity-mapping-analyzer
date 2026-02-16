@@ -21,6 +21,13 @@
     <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.Common" Version="4.11.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="4.11.0" />
     
+    <!-- MEF Composition required by Roslyn workspaces for .NET 8.0 -->
+    <PackageReference Include="System.Composition.AttributedModel" Version="8.0.0" />
+    <PackageReference Include="System.Composition.Convention" Version="8.0.0" />
+    <PackageReference Include="System.Composition.Hosting" Version="8.0.0" />
+    <PackageReference Include="System.Composition.Runtime" Version="8.0.0" />
+    <PackageReference Include="System.Composition.TypedParts" Version="8.0.0" />
+    
     <!-- MSBuild integration - Updated for better .NET 8.0 and VS 2022 support -->
     <PackageReference Include="Microsoft.Build.Locator" Version="1.7.8" />
     
